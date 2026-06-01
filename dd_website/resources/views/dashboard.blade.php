@@ -532,9 +532,12 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+
 <script>
 // ── Config ────────────────────────────────────────────────────────────────
-const FLASK_URL    = 'https://appears-implement-francis-measuring.trycloudflare.com';
+// const FLASK_URL    = 'https://appears-implement-francis-measuring.trycloudflare.com';
 const LARAVEL_URL  = 'http://192.168.18.11:8000';
 const EAR_OPEN     = 0.38;
 const EAR_CLOSED   = 0.27;
@@ -550,6 +553,8 @@ let faceDetected   = false;
 let lastBeep       = 0;
 let beepAudio      = null;
 let frameCount     = 0;
+let model;
+let scaler;
 
 // ── EAR indices ───────────────────────────────────────────────────────────
 const LEFT_EYE  = [362, 385, 387, 263, 373, 380];
@@ -609,28 +614,28 @@ faceMesh.onResults(async (results) => {
       flat.push(lm[i].x);
       flat.push(lm[i].y);
     }
-    sendToFlask(flat);
+    predictLocal(flat);
   }
 
   updateUI();
 });
 
 // ── Kirim landmark ke Flask ───────────────────────────────────────────────
-async function sendToFlask(landmarks) {
-  try {
-    const res  = await fetch(`${FLASK_URL}/predict`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ landmarks })
-    });
-    const data = await res.json();
-    if (data.confidence !== undefined) {
-      confidence = data.confidence;
-    }
-  } catch (e) {
-    // Flask tidak tersedia
-  }
-}
+// async function sendToFlask(landmarks) {
+//   try {
+//     const res  = await fetch(`${FLASK_URL}/predict`, {
+//       method: 'POST',
+//       headers: { 'Content-Type': 'application/json' },
+//       body: JSON.stringify({ landmarks })
+//     });
+//     const data = await res.json();
+//     if (data.confidence !== undefined) {
+//       confidence = data.confidence;
+//     }
+//   } catch (e) {
+//     // Flask tidak tersedia
+//   }
+// }
 
 // ── Fetch IoT data dari Laravel ───────────────────────────────────────────
 async function fetchIoT() {
@@ -759,11 +764,84 @@ async function initCamera() {
   }, 1000);
 }
 
-// ── Start ─────────────────────────────────────────────────────────────────
-initCamera().catch(err => {
-  console.error('Camera error:', err);
-  document.querySelector('.loading-text').textContent = 'IZIN KAMERA DITOLAK';
-});
+//new adawdawd
+async function loadAI() {
+
+  console.log("Loading model...");
+  console.log("tflite:", tflite);
+  console.log("tf:", tf);
+
+  model = await tflite.loadTFLiteModel(
+      '/model/drowsiness_model_v2.tflite'
+  );
+
+  console.log("Model loaded:", model);
+
+  scaler = await fetch('/model/scaler_v2.json')
+      .then(r => r.json());
+
+  console.log("Scaler loaded");
+}
+
+function normalize(data) {
+
+  return data.map((v, i) =>
+      (v * scaler.scale[i]) + scaler.min[i]
+  );
+
+}
+
+async function predictLocal(flat) {
+
+  try {
+
+      const normalized = normalize(flat);
+
+      const input = tf.tensor(
+          [normalized],
+          [1, 936]
+      );
+
+      const output = model.predict(input);
+
+      const data = output.dataSync();
+
+      confidence = data[0];
+
+      console.log("Prediction:", confidence);
+
+      input.dispose();
+      output.dispose();
+
+  } catch (e) {
+      console.error("PREDICT ERROR:", e);
+  }
+}
+// new adadadadwad
+
+// // ── Start ─────────────────────────────────────────────────────────────────
+// initCamera().catch(err => {
+//   console.error('Camera error:', err);
+//   document.querySelector('.loading-text').textContent = 'IZIN KAMERA DITOLAK';
+// });
+(async () => {
+
+  try {
+
+    await loadAI();
+
+    await initCamera();
+
+  } catch(err) {
+
+    console.error(err);
+
+    document.querySelector('.loading-text')
+      .textContent = 'GAGAL LOAD AI';
+
+  }
+
+})();
 
 // Fetch IoT setiap 2 detik
 setInterval(fetchIoT, 2000);
