@@ -39,12 +39,36 @@ class IotController extends Controller
     // Kirim data terbaru ke browser
     public function latest()
     {
-        $data = Cache::get('sensor_data', [
+        $sensor  = Cache::get('sensor_data', [
             'hr'        => 0,
             'spo2'      => 0,
             'timestamp' => null,
         ]);
+        $gender    = Cache::get('driver_gender', 'male');
+        $threshold = $gender === 'female' ? 81 : 76;
+        $hr        = (float) ($sensor['hr'] ?? 0);
 
-        return response()->json($data);
+        // hr_low: HR valid (>50) tapi di bawah threshold → indikasi mengantuk
+        $hrLow = $hr > 50 && $hr < $threshold;
+
+        return response()->json([
+            'hr'        => $sensor['hr'],
+            'spo2'      => $sensor['spo2'],
+            'timestamp' => $sensor['timestamp'],
+            'gender'    => $gender,
+            'threshold' => $threshold,
+            'hr_low'    => $hrLow,
+        ]);
+    }
+
+    // ── BARU: simpan pilihan gender dari browser ──────────────────
+    public function setGender(Request $request)
+    {
+        $gender = $request->input('gender');
+        if (!in_array($gender, ['male', 'female'])) {
+            return response()->json(['error' => 'Invalid gender'], 422);
+        }
+        Cache::put('driver_gender', $gender, 3600);
+        return response()->json(['status' => 'ok', 'gender' => $gender]);
     }
 }
