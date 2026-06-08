@@ -39,36 +39,60 @@ class IotController extends Controller
     // Kirim data terbaru ke browser
     public function latest()
     {
-        $sensor  = Cache::get('sensor_data', [
+        $sensor = Cache::get('sensor_data', [
             'hr'        => 0,
             'spo2'      => 0,
             'timestamp' => null,
         ]);
-        $gender    = Cache::get('driver_gender', 'male');
-        $threshold = $gender === 'female' ? 81 : 76;
-        $hr        = (float) ($sensor['hr'] ?? 0);
 
-        // hr_low: HR valid (>50) tapi di bawah threshold → indikasi mengantuk
-        $hrLow = $hr > 50 && $hr < $threshold;
+        $hr = (float) ($sensor['hr'] ?? 0);
+
+        // Ambil atau bangun baseline
+        $baseline    = Cache::get('hr_baseline');        // null kalau belum ada
+        $baselineLog = Cache::get('hr_baseline_log', []); // array HR selama 2 menit
+        $hrLow       = false;
+
+        if ($hr > 50) {
+            if (!$baseline) {
+                $baselineLog[] = $hr;
+                Cache::put('hr_baseline_log', $baselineLog, 300);
+
+                if (count($baselineLog) >= 60) {
+                    $baseline = array_sum($baselineLog) / count($baselineLog);
+                    Cache::put('hr_baseline', $baseline, 3600);
+                    Cache::forget('hr_baseline_log');
+                }
+            } else {
+                $drop = ($baseline - $hr) / $baseline * 100;
+
+                $cameraWasActive = Cache::get('camera_active', false);
+
+                if (!$cameraWasActive) {
+                    // Kamera mati → nyala jika turun ≥ 9.3%
+                    $hrLow = $drop >= 9.3;
+                } else {
+                    // Kamera nyala → mati jika naik kembali ke ≤ 5% penurunan
+                    $hrLow = $drop >= 5.0;
+                }
+
+                Cache::put('camera_active', $hrLow, 3600);
+            }
+        }
 
         return response()->json([
-            'hr'        => $sensor['hr'],
-            'spo2'      => $sensor['spo2'],
-            'timestamp' => $sensor['timestamp'],
-            'gender'    => $gender,
-            'threshold' => $threshold,
-            'hr_low'    => $hrLow,
+            'hr'           => $sensor['hr'],
+            'spo2'         => $sensor['spo2'],
+            'timestamp'    => $sensor['timestamp'],
+            'hr_low'       => $hrLow,
+            'baseline'     => $baseline ? round($baseline, 1) : null,
+            'baseline_ready' => $baseline !== null,
         ]);
     }
 
-    // ── BARU: simpan pilihan gender dari browser ──────────────────
-    public function setGender(Request $request)
+    public function resetBaseline()
     {
-        $gender = $request->input('gender');
-        if (!in_array($gender, ['male', 'female'])) {
-            return response()->json(['error' => 'Invalid gender'], 422);
-        }
-        Cache::put('driver_gender', $gender, 3600);
-        return response()->json(['status' => 'ok', 'gender' => $gender]);
+        Cache::forget('hr_baseline');
+        Cache::forget('hr_baseline_log');
+        return response()->json(['status' => 'ok']);
     }
 }

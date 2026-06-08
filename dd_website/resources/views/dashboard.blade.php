@@ -615,36 +615,30 @@
   <!-- Alert overlay -->
   <div class="alert-overlay" id="alertOverlay"></div>
 
-  <!-- Gender Modal -->
-  <div id="genderModal" style="
-  position:fixed; inset:0; background:rgba(0,0,0,0.92);
-  display:flex; flex-direction:column; align-items:center;
-  justify-content:center; z-index:200; gap:24px;
-">
-    <div style="font-family:'Syne',sans-serif; font-size:26px; font-weight:800; color:#00ff88; letter-spacing:-1px">
-      NoDrowsy
-    </div>
-    <div
-      style="font-family:'Space Mono',monospace; font-size:11px; color:#6b6b80; letter-spacing:3px; text-align:center">
-      PILIH GENDER PENGEMUDI<br>
-      <span style="font-size:9px; opacity:0.6">untuk kalibrasi threshold detak jantung</span>
-    </div>
-    <div style="display:flex; gap:14px">
-      <button onclick="selectGender('male')" style="
+  <div style="font-family:'Syne',sans-serif; font-size:26px; font-weight:800; color:#00ff88; letter-spacing:-1px">
+    NoDrowsy
+  </div>
+  {{-- <div
+    style="font-family:'Space Mono',monospace; font-size:11px; color:#6b6b80; letter-spacing:3px; text-align:center">
+    PILIH GENDER PENGEMUDI<br>
+    <span style="font-size:9px; opacity:0.6">untuk kalibrasi threshold detak jantung</span>
+  </div> --}}
+  {{-- <div style="display:flex; gap:14px">
+    <button onclick="selectGender('male')" style="
       padding:16px 28px; border-radius:14px;
       border:1px solid rgba(68,136,255,0.4);
       background:rgba(68,136,255,0.08); color:#4488ff;
       font-family:'Space Mono',monospace; font-size:12px; font-weight:700;
       cursor:pointer; letter-spacing:1px; line-height:1.6;
     ">♂ PRIA<br><span style="font-size:9px; opacity:0.7">Threshold &lt; 76 BPM</span></button>
-      <button onclick="selectGender('female')" style="
+    <button onclick="selectGender('female')" style="
       padding:16px 28px; border-radius:14px;
       border:1px solid rgba(255,68,102,0.4);
       background:rgba(255,68,102,0.08); color:#ff4466;
       font-family:'Space Mono',monospace; font-size:12px; font-weight:700;
       cursor:pointer; letter-spacing:1px; line-height:1.6;
     ">♀ WANITA<br><span style="font-size:9px; opacity:0.7">Threshold &lt; 81 BPM</span></button>
-    </div>
+  </div> --}}
   </div>
 
   <div class="app">
@@ -725,6 +719,53 @@
               <div class="iot-metric-unit">%</div>
             </div>
           </div>
+
+          <!-- Baseline Status - Di sini -->
+          <div style="
+                    margin-top: 14px; 
+                    padding-top: 14px; 
+                    border-top: 1px solid var(--border);
+                  ">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="flex:1;">
+                <div class="iot-metric-label" style="font-size:8px; margin-bottom:4px;">CARDIO BASELINE</div>
+                <div id="baselineVal" style="
+                          font-family: var(--font-mono); 
+                          font-size: 20px; 
+                          font-weight: 700; 
+                          color: var(--accent);
+                        ">--</div>
+              </div>
+
+              <!-- Tombol Reset -->
+              <button onclick="resetBaseline()" style="
+                        background: rgba(255, 68, 102, 0.1);
+                        border: 1px solid rgba(255, 68, 102, 0.3);
+                        color: var(--accent2);
+                        padding: 6px 10px;
+                        border-radius: 6px;
+                        font-family: var(--font-mono);
+                        font-size: 9px;
+                        font-weight: 700;
+                        cursor: pointer;
+                        transition: all 0.2s;
+                        display: flex;
+                        align-items: center;
+                        gap: 4px;
+                      " onmouseover="this.style.background='rgba(255, 68, 102, 0.2)'"
+                onmouseout="this.style.background='rgba(255, 68, 102, 0.1)'">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <path d="M23 4v6h-6M1 20v-6h6" />
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                </svg>
+                 RESET CARDIO <br> BASELINE
+              </button>
+            </div>
+
+            <div style="font-family: var(--font-mono); font-size: 8px; color: var(--text2); margin-top:6px;">
+              Status: <span id="baselineStatusText" style="color: var(--warn);">MENGUMPULKAN...</span>
+            </div>
+          </div>
         </div>
 
       </div><!-- end right-panel -->
@@ -756,10 +797,7 @@
     let frameCount = 0;
     let model, scaler;
     let isPredicting = false;
-
-    // ── State serial ──────────────────────────────────────────────────
-    let cameraActive = false;   // Sistem 2 mati by default
-    let selectedGender = null;
+    let cameraActive = false;
     let cameraInstance = null;
 
     // ── EAR Indices ───────────────────────────────────────────────────
@@ -787,7 +825,7 @@
       minTrackingConfidence: 0.5,
     });
     faceMesh.onResults(async (results) => {
-      if (!cameraActive) return; // ← Sistem 2 belum aktif, abaikan
+      if (!cameraActive) return;
 
       frameCount++;
 
@@ -810,7 +848,7 @@
       if (earValue < EAR_THRESH) eyeClosedCount++;
       else eyeClosedCount = 0;
 
-      if (frameCount % 3 === 0) {
+      if (frameCount % 10 === 0) {
         const flat = [];
         for (let i = 0; i < 468; i++) {
           flat.push(lm[i].x);
@@ -822,34 +860,7 @@
       updateUI();
     });
 
-    // ── Step 1: Pilih gender → simpan ke Laravel → load AI ───────────
-    async function selectGender(gender) {
-      selectedGender = gender;
-
-      // Kirim gender ke Laravel
-      await fetch(`${LARAVEL_URL}/api/driver/gender`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gender })
-      }).catch(() => { });
-
-      // Tutup modal, tampilkan loading
-      document.getElementById('genderModal').style.display = 'none';
-      document.getElementById('loadingScreen').style.display = 'flex';
-      document.querySelector('.loading-text').textContent = 'MEMUAT AI...';
-
-      try {
-        await loadAI();
-        document.getElementById('loadingScreen').classList.add('hidden');
-        document.getElementById('camStatus').textContent = 'MENUNGGU SENSOR HR...';
-        document.getElementById('camStatus').className = 'cam-status init';
-      } catch (e) {
-        document.querySelector('.loading-text').textContent = 'GAGAL LOAD AI';
-        console.error(e);
-      }
-    }
-
-    // ── Step 2: Polling IoT → cek hr_low → aktifkan/matikan kamera ───
+    // ── Fetch IoT ─────────────────────────────────────────────────────
     async function fetchIoT() {
       try {
         const res = await fetch(`${LARAVEL_URL}/api/sensor/latest`);
@@ -858,31 +869,51 @@
         const hr = parseFloat(data.hr || 0);
         const spo2 = parseFloat(data.spo2 || 0);
         const hrLow = data.hr_low === true;
+        const baselineReady = data.baseline_ready === true;
+        const baseline = data.baseline;
 
         // Update tampilan sensor
-        const hrEl = document.getElementById('hrVal');
-        const spo2El = document.getElementById('spo2Val');
-        const timeEl = document.getElementById('iotTime');
+        document.getElementById('hrVal').textContent = hr > 0 ? hr.toFixed(0) : '--';
+        document.getElementById('spo2Val').textContent = spo2 > 0 ? spo2.toFixed(1) : '--';
+        document.getElementById('hrVal').className = 'iot-metric-value' + (hrLow ? ' warn' : '');
+        document.getElementById('spo2Val').className = 'iot-metric-value' + (spo2 > 0 && spo2 < 95 ? ' danger' : '');
+        if (data.timestamp) document.getElementById('iotTime').textContent = data.timestamp;
 
-        hrEl.textContent = hr > 0 ? hr.toFixed(0) : '--';
-        spo2El.textContent = spo2 > 0 ? spo2.toFixed(1) : '--';
-        hrEl.className = 'iot-metric-value' + (hrLow ? ' warn' : '');
-        spo2El.className = 'iot-metric-value' + (spo2 > 0 && spo2 < 95 ? ' danger' : '');
-        if (data.timestamp) timeEl.textContent = data.timestamp;
+        // Update status baseline
+        if (!baselineReady) {
+          document.getElementById('baselineStatusText').textContent = 'MENGUMPULKAN...';
+          document.getElementById('baselineStatusText').style.color = 'var(--warn)';
+          document.getElementById('baselineVal').textContent = '--';
+          document.getElementById('baselineVal').style.color = 'var(--text2)';
+        } else {
+          document.getElementById('baselineStatusText').textContent = 'TERKUNCI ✓';
+          document.getElementById('baselineStatusText').style.color = 'var(--accent)';
+          document.getElementById('baselineVal').textContent = baseline + ' BPM';
+          document.getElementById('baselineVal').style.color = 'var(--accent)';
+        }
 
-        // ── Logika serial ─────────────────────────────────────────────
-        if (hrLow && !cameraActive && selectedGender !== null) {
-          // HR rendah → nyalakan Sistem 2
+        // Logika serial
+        if (hrLow && !cameraActive) {
           await activateCamera();
         } else if (!hrLow && cameraActive) {
-          // HR kembali normal → matikan Sistem 2
           deactivateCamera();
         }
 
-      } catch (e) { /* Laravel tidak tersedia */ }
+      } catch (e) { }
     }
 
-    // ── Aktifkan kamera (dipanggil Sistem 1 lewat hrLow) ──────────────
+    // ── Reset baseline ────────────────────────────────────────────────
+    async function resetBaseline() {
+      await fetch(`${LARAVEL_URL}/api/baseline/reset`, { method: 'POST' }).catch(() => { });
+      deactivateCamera();
+      document.getElementById('baselineStatusText').textContent = 'MENGUMPULKAN...';
+      document.getElementById('baselineStatusText').style.color = 'var(--warn)';
+      document.getElementById('baselineVal').textContent = '--';
+      document.getElementById('baselineVal').style.color = 'var(--text2)';
+      console.log('Baseline direset');
+    }
+
+    // ── Aktifkan kamera ───────────────────────────────────────────────
     async function activateCamera() {
       if (cameraActive) return;
       cameraActive = true;
@@ -904,16 +935,13 @@
           width: 320, height: 240
         });
         cameraInstance.start();
-
-        console.log('Sistem 2 aktif: HR rendah terdeteksi');
       } catch (e) {
         cameraActive = false;
-        console.error('Gagal aktifkan kamera:', e);
         document.getElementById('camStatus').textContent = 'IZIN KAMERA DITOLAK';
       }
     }
 
-    // ── Matikan kamera (HR kembali normal) ────────────────────────────
+    // ── Matikan kamera ────────────────────────────────────────────────
     function deactivateCamera() {
       cameraActive = false;
       earValue = 0;
@@ -926,12 +954,8 @@
         video.srcObject.getTracks().forEach(t => t.stop());
         video.srcObject = null;
       }
-      if (cameraInstance) {
-        cameraInstance.stop?.();
-        cameraInstance = null;
-      }
+      if (cameraInstance) { cameraInstance.stop?.(); cameraInstance = null; }
 
-      // Reset UI Sistem 2
       document.getElementById('camStatus').textContent = 'MENUNGGU SENSOR HR...';
       document.getElementById('camStatus').className = 'cam-status init';
       document.getElementById('earVal').textContent = '—';
@@ -940,11 +964,9 @@
       document.getElementById('earBar').style.width = '0%';
       document.getElementById('confPct').textContent = '0%';
       document.getElementById('earPct').textContent = '0%';
-
-      console.log('Sistem 2 nonaktif: HR kembali normal');
     }
 
-    // ── Update UI Sistem 2 ────────────────────────────────────────────
+    // ── Update UI ─────────────────────────────────────────────────────
     function updateUI() {
       if (!cameraActive) return;
 
@@ -967,10 +989,7 @@
       document.getElementById('alertOverlay').classList.toggle('active', eyeDrowsy && modelDrowsy);
 
       const now = Date.now();
-      if ((eyeDrowsy || modelDrowsy) && now - lastBeep > 1000) {
-        playBeep();
-        lastBeep = now;
-      }
+      if ((eyeDrowsy || modelDrowsy) && now - lastBeep > 1000) { playBeep(); lastBeep = now; }
 
       const earPct = Math.max(0, Math.min(100,
         (earValue - EAR_CLOSED) / (EAR_OPEN - EAR_CLOSED) * 100
@@ -999,18 +1018,15 @@
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = 880;
-        osc.type = 'sine';
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = 880; osc.type = 'sine';
         gain.gain.setValueAtTime(0.3, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.4);
+        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.4);
       } catch (e) { }
     }
 
-    // ── Load TFLite model (tanpa Flask) ───────────────────────────────
+    // ── Load AI ───────────────────────────────────────────────────────
     async function loadAI() {
       model = await tflite.loadTFLiteModel('/model/drowsiness_model_v2.tflite');
       scaler = await fetch('/model/scaler_v2.json').then(r => r.json());
@@ -1022,15 +1038,14 @@
     }
 
     async function predictLocal(flat) {
-      if (isPredicting) return;  // skip kalau masih prediksi
+      if (isPredicting) return;
       isPredicting = true;
       try {
         const normalized = normalize(flat);
         const input = tf.tensor([normalized], [1, 936]);
         const output = model.predict(input);
         confidence = output.dataSync()[0];
-        input.dispose();
-        output.dispose();
+        input.dispose(); output.dispose();
       } catch (e) {
         console.error('PREDICT ERROR:', e);
       } finally {
@@ -1038,8 +1053,18 @@
       }
     }
 
-    // ── Boot: sembunyikan loading, tampilkan modal gender ─────────────
-    document.getElementById('loadingScreen').classList.add('hidden');
+    // ── Boot ──────────────────────────────────────────────────────────
+    (async () => {
+      try {
+        document.querySelector('.loading-text').textContent = 'MEMUAT AI...';
+        await loadAI();
+        document.getElementById('loadingScreen').classList.add('hidden');
+        document.getElementById('camStatus').textContent = 'MENUNGGU SENSOR HR...';
+        document.getElementById('camStatus').className = 'cam-status init';
+      } catch (e) {
+        document.querySelector('.loading-text').textContent = 'GAGAL LOAD AI';
+      }
+    })();
 
     // Polling IoT setiap 2 detik
     setInterval(fetchIoT, 2000);

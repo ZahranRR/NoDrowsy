@@ -5,7 +5,7 @@ use App\Http\Controllers\IotController;
 
 Route::post('/sensor', [IotController::class, 'store']);
 Route::get('/sensor/latest', [IotController::class, 'latest']);
-Route::post('/driver/gender',  [IotController::class, 'setGender']);
+Route::post('/baseline/reset',   [IotController::class, 'resetBaseline']);
 
 // Route::post('/predict', function(\Illuminate\Http\Request $request) {
 //     try {

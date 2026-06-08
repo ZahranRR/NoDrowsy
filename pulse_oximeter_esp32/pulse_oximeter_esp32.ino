@@ -25,35 +25,36 @@
 #include <esp_sleep.h>
 #include <pgmspace.h>
 #include <WiFi.h>
+#include <WiFiManager.h>
 #include <PubSubClient.h>  // ← ganti HTTPClient & ArduinoJson
 
 // ─── WiFi & MQTT Config ───────────────────────────────────────────
-const char* WIFI_SSID     = "watermelons";
-const char* WIFI_PASSWORD = "watermelons";
-const char* MQTT_SERVER   = "192.168.18.11";  // IP laptop
-const int   MQTT_PORT     = 1883;
-const char* MQTT_TOPIC    = "oximeter/data";
-const char* MQTT_CLIENT   = "ESP32-Oximeter";
+// const char* WIFI_SSID     = "watermelons";
+// const char* WIFI_PASSWORD = "watermelons";
+char MQTT_SERVER[40] = "192.168.18.11";  // IP laptop
+const int MQTT_PORT = 1883;
+const char* MQTT_TOPIC = "oximeter/data";
+const char* MQTT_CLIENT = "ESP32-Oximeter";
 
 // ─── Pin & Layar ─────────────────────────────────────────────────
-#define I2C_SDA      21
-#define I2C_SCL      22
-#define OLED_ADDR    0x3C
-#define SCREEN_W     128
-#define SCREEN_H     64
+#define I2C_SDA 21
+#define I2C_SCL 22
+#define OLED_ADDR 0x3C
+#define SCREEN_W 128
+#define SCREEN_H 64
 
 // ─── Objects ─────────────────────────────────────────────────────
 Adafruit_SH1106G oled(SCREEN_W, SCREEN_H, &Wire, -1);
-MAX30102          sensor;
-Pulse             pulseIR;
-Pulse             pulseRed;
-MAFilter          bpm;
-WiFiClient        wifiClient;
-PubSubClient      mqtt(wifiClient);
+MAX30102 sensor;
+Pulse pulseIR;
+Pulse pulseRed;
+MAFilter bpm;
+WiFiClient wifiClient;
+PubSubClient mqtt(wifiClient);
 
 // ─── BPM Smoothing ───────────────────────────────────────────────
 #define BPM_SAMPLES 8
-int     bpmBuffer[BPM_SAMPLES] = {0};
+int bpmBuffer[BPM_SAMPLES] = { 0 };
 uint8_t bpmIdx = 0;
 
 int smoothBPM(int newVal) {
@@ -62,7 +63,10 @@ int smoothBPM(int newVal) {
   bpmIdx = (bpmIdx + 1) % BPM_SAMPLES;
   int sum = 0, count = 0;
   for (int i = 0; i < BPM_SAMPLES; i++) {
-    if (bpmBuffer[i] > 0) { sum += bpmBuffer[i]; count++; }
+    if (bpmBuffer[i] > 0) {
+      sum += bpmBuffer[i];
+      count++;
+    }
   }
   return count > 0 ? sum / count : newVal;
 }
@@ -71,18 +75,18 @@ Preferences prefs;
 
 // ─── SpO2 Lookup Table ───────────────────────────────────────────
 const uint8_t spo2_table[184] PROGMEM = {
-   95, 95, 95, 96, 96, 96, 97, 97, 97, 97, 97, 98, 98, 98, 98, 98,
-   99, 99, 99, 99, 99, 99, 99, 99,100,100,100,100,100,100,100,100,
-  100,100,100,100,100,100,100,100,100,100,100,100, 99, 99, 99, 99,
-   99, 99, 99, 99, 98, 98, 98, 98, 98, 98, 97, 97, 97, 97, 96, 96,
-   96, 96, 95, 95, 95, 94, 94, 94, 93, 93, 93, 92, 92, 92, 91, 91,
-   90, 90, 89, 89, 89, 88, 88, 87, 87, 86, 86, 85, 85, 84, 84, 83,
-   82, 82, 81, 81, 80, 80, 79, 78, 78, 77, 76, 76, 75, 74, 74, 73,
-   72, 72, 71, 70, 69, 69, 68, 67, 66, 66, 65, 64, 63, 62, 62, 61,
-   60, 59, 58, 57, 56, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46,
-   45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 31, 30, 29,
-   28, 27, 26, 25, 23, 22, 21, 20, 19, 17, 16, 15, 14, 12, 11, 10,
-    9,  7,  6,  5,  3,  2,  1
+  95, 95, 95, 96, 96, 96, 97, 97, 97, 97, 97, 98, 98, 98, 98, 98,
+  99, 99, 99, 99, 99, 99, 99, 99, 100, 100, 100, 100, 100, 100, 100, 100,
+  100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 99, 99, 99, 99,
+  99, 99, 99, 99, 98, 98, 98, 98, 98, 98, 97, 97, 97, 97, 96, 96,
+  96, 96, 95, 95, 95, 94, 94, 94, 93, 93, 93, 92, 92, 92, 91, 91,
+  90, 90, 89, 89, 89, 88, 88, 87, 87, 86, 86, 85, 85, 84, 84, 83,
+  82, 82, 81, 81, 80, 80, 79, 78, 78, 77, 76, 76, 75, 74, 74, 73,
+  72, 72, 71, 70, 69, 69, 68, 67, 66, 66, 65, 64, 63, 62, 62, 61,
+  60, 59, 58, 57, 56, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46,
+  45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 31, 30, 29,
+  28, 27, 26, 25, 23, 22, 21, 20, 19, 17, 16, 15, 14, 12, 11, 10,
+  9, 7, 6, 5, 3, 2, 1
 };
 
 // ─── Waveform ────────────────────────────────────────────────────
@@ -90,7 +94,8 @@ const uint8_t MAXWAVE = 72;
 
 class Waveform {
 public:
-  Waveform() : wavep(0) {}
+  Waveform()
+    : wavep(0) {}
 
   void record(int waveval) {
     waveval = waveval / 8 + 128;
@@ -136,14 +141,16 @@ private:
 } wave;
 
 // ─── Global State ────────────────────────────────────────────────
-int     beatAvg          = 0;
-int     SPO2             = 0;
-int     SPO2f            = 0;
-bool    filter_for_graph = false;
-bool    draw_Red         = false;
-uint8_t sleep_counter    = 0;
-long    lastBeat         = 0;
-long    displaytime      = 0;
+int beatAvg = 0;
+int SPO2 = 0;
+int SPO2f = 0;
+bool filter_for_graph = false;
+bool draw_Red = false;
+uint8_t sleep_counter = 0;
+long lastBeat = 0;
+long displaytime = 0;
+unsigned long lastMqttRetry = 0;
+const int MQTT_RETRY_INTERVAL = 5000;
 
 // ─── Helper: cetak angka multi-digit di OLED ─────────────────────
 void print_digit(int x, int y, long val, char c = ' ', uint8_t field = 3, uint8_t sz = 2) {
@@ -251,27 +258,75 @@ void draw_oled(int msg) {
       oled.setTextSize(1);
       oled.print('%');
       break;
+
+    case 6:  // Connecting WiFi
+      oled.setTextSize(1);
+      oled.setTextColor(SH110X_WHITE);
+      oled.setCursor(0, 10);
+      oled.print(F("Connecting"));
+      oled.setCursor(0, 25);
+      oled.print(F("to WiFi..."));
+      oled.setCursor(0, 45);
+      oled.print(F("Open hotspot:"));
+      oled.setCursor(0, 55);
+      oled.print(F("NoDrowsy-Setup"));
+      break;
+
+    case 7:  // WiFi Failed
+      oled.setTextSize(1);
+      oled.setTextColor(SH110X_WHITE);
+      oled.setCursor(0, 20);
+      oled.print(F("WiFi Failed!"));
+      oled.setCursor(0, 35);
+      oled.print(F("Restart device"));
+      break;
+
+    case 8:  // WiFi OK, connecting MQTT
+      oled.setTextSize(1);
+      oled.setTextColor(SH110X_WHITE);
+      oled.setCursor(0, 5);
+      oled.print(F("WiFi OK!"));
+      oled.setCursor(0, 18);
+      oled.print(WiFi.localIP().toString());
+      oled.setCursor(0, 35);
+      oled.print(F("Connecting"));
+      oled.setCursor(0, 48);
+      oled.print(F("MQTT..."));
+      break;
+
+    case 9:  // MQTT Failed
+      oled.setTextSize(1);
+      oled.setTextColor(SH110X_WHITE);
+      oled.setCursor(0, 10);
+      oled.print(F("MQTT Failed!"));
+      oled.setCursor(0, 25);
+      oled.print(F("Check IP:"));
+      oled.setCursor(0, 38);
+      oled.print(MQTT_SERVER);
+      oled.setCursor(0, 51);
+      oled.print(F("Retrying..."));
+      break;
   }
 
   oled.display();
 }
 
 // ─── Koneksi WiFi ─────────────────────────────────────────────────
-void connectWiFi() {
-  Serial.print("Connecting to WiFi");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  int retry = 0;
-  while (WiFi.status() != WL_CONNECTED && retry < 20) {
-    delay(500);
-    Serial.print(".");
-    retry++;
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected! IP: " + WiFi.localIP().toString());
-  } else {
-    Serial.println("\nWiFi gagal, lanjut tanpa internet.");
-  }
-}
+// void connectWiFi() {
+//   Serial.print("Connecting to WiFi");
+//   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+//   int retry = 0;
+//   while (WiFi.status() != WL_CONNECTED && retry < 20) {
+//     delay(500);
+//     Serial.print(".");
+//     retry++;
+//   }
+//   if (WiFi.status() == WL_CONNECTED) {
+//     Serial.println("\nWiFi connected! IP: " + WiFi.localIP().toString());
+//   } else {
+//     Serial.println("\nWiFi gagal, lanjut tanpa internet.");
+//   }
+// }
 
 // ─── Koneksi MQTT ────────────────────────────────────────────────
 void connectMQTT() {
@@ -279,8 +334,19 @@ void connectMQTT() {
   if (mqtt.connected()) return;
 
   Serial.print("Connecting MQTT...");
+
   if (mqtt.connect(MQTT_CLIENT)) {
     Serial.println("connected!");
+    // Tampilkan MQTT connected di OLED sebentar
+    oled.clearDisplay();
+    oled.setTextSize(1);
+    oled.setTextColor(SH110X_WHITE);
+    oled.setCursor(0, 5);
+    oled.print(F("MQTT Connected!"));
+    oled.setCursor(0, 20);
+    oled.print(String(MQTT_SERVER));
+    oled.display();
+    delay(1500);
   } else {
     Serial.printf("failed rc=%d\n", mqtt.state());
   }
@@ -293,7 +359,38 @@ void setup() {
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(400000);
 
-  connectWiFi();
+  if (!oled.begin(OLED_ADDR, true)) {
+    Serial.println(F("OLED tidak ditemukan!"));
+    while (1) delay(500);
+  }
+  oled.clearDisplay();
+  oled.display();
+
+  // ── WiFiManager ──────────────────────────────────────────────
+  WiFiManager wifiManager;
+
+  // Custom parameter untuk MQTT Server
+  WiFiManagerParameter mqttParam("mqtt", "MQTT Server IP", MQTT_SERVER, 40);
+  wifiManager.addParameter(&mqttParam);
+
+  wifiManager.setConfigPortalTimeout(180);
+
+  draw_oled(6);
+
+  // Nama hotspot saat mode setup
+  if (!wifiManager.autoConnect("NoDrowsy-Setup")) {
+    Serial.println("WiFi gagal, lanjut tanpa internet.");
+    draw_oled(7);
+    delay(2000);
+  } else {
+    Serial.println("WiFi connected! IP: " + WiFi.localIP().toString());
+
+    // Simpan MQTT server dari input portal
+    strncpy(MQTT_SERVER, mqttParam.getValue(), 40);
+    Serial.println("MQTT Server: " + String(MQTT_SERVER));
+
+    draw_oled(8);
+  }
 
   // Setup MQTT
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
@@ -301,14 +398,7 @@ void setup() {
 
   prefs.begin("oximeter", false);
   filter_for_graph = prefs.getBool("filter", false);
-  draw_Red         = prefs.getBool("drawRed", false);
-
-  if (!oled.begin(OLED_ADDR, true)) {
-    Serial.println(F("OLED tidak ditemukan!"));
-    while (1) delay(500);
-  }
-  oled.clearDisplay();
-  oled.display();
+  draw_Red = prefs.getBool("drawRed", false);
 
   draw_oled(3);
   delay(3000);
@@ -329,8 +419,22 @@ unsigned long lastSend = 0;
 const int SEND_INTERVAL = 2000;
 
 void loop() {
+  // ── Reset WiFi via Serial Monitor (ketik 'r') ─────────────────
+  if (Serial.available() && Serial.read() == 'r') {
+    Serial.println("Resetting WiFi settings...");
+    WiFiManager wifiManager;
+    wifiManager.resetSettings();
+    ESP.restart();
+  }
+
   // MQTT keep-alive (non-blocking)
-  if (!mqtt.connected()) connectMQTT();
+  if (!mqtt.connected()) {
+    unsigned long now2 = millis();
+    if (now2 - lastMqttRetry >= MQTT_RETRY_INTERVAL) {
+      lastMqttRetry = now2;
+      connectMQTT();
+    }
+  }
   mqtt.loop();
 
   sensor.check();
@@ -338,7 +442,7 @@ void loop() {
 
   if (!sensor.available()) return;
 
-  uint32_t irValue  = sensor.getIR();
+  uint32_t irValue = sensor.getIR();
   uint32_t redValue = sensor.getRed();
   sensor.nextSample();
 
@@ -358,18 +462,18 @@ void loop() {
   sleep_counter = 0;
 
   int16_t IR_signal, Red_signal;
-  bool    beatRed, beatIR;
+  bool beatRed, beatIR;
 
   if (!filter_for_graph) {
-    IR_signal  = pulseIR.dc_filter(irValue);
+    IR_signal = pulseIR.dc_filter(irValue);
     Red_signal = pulseRed.dc_filter(redValue);
-    beatRed    = pulseRed.isBeat(pulseRed.ma_filter(Red_signal));
-    beatIR     = pulseIR.isBeat(pulseIR.ma_filter(IR_signal));
+    beatRed = pulseRed.isBeat(pulseRed.ma_filter(Red_signal));
+    beatIR = pulseIR.isBeat(pulseIR.ma_filter(IR_signal));
   } else {
-    IR_signal  = pulseIR.ma_filter(pulseIR.dc_filter(irValue));
+    IR_signal = pulseIR.ma_filter(pulseIR.dc_filter(irValue));
     Red_signal = pulseRed.ma_filter(pulseRed.dc_filter(redValue));
-    beatRed    = pulseRed.isBeat(Red_signal);
-    beatIR     = pulseIR.isBeat(IR_signal);
+    beatRed = pulseRed.isBeat(Red_signal);
+    beatIR = pulseIR.isBeat(IR_signal);
   }
 
   wave.record(draw_Red ? -Red_signal : -IR_signal);
@@ -381,19 +485,26 @@ void loop() {
       beatAvg = smoothBPM((int)btpm);
     lastBeat = now;
 
-    long numerator   = (pulseRed.avgAC() * pulseIR.avgDC()) / 256;
+    long numerator = (pulseRed.avgAC() * pulseIR.avgDC()) / 256;
     long denominator = (pulseRed.avgDC() * pulseIR.avgAC()) / 256;
-    int  RX100       = (denominator > 0) ? (numerator * 100) / denominator : 999;
+    int RX100 = (denominator > 0) ? (numerator * 100) / denominator : 999;
 
     SPO2f = (10400 - RX100 * 17 + 50) / 100;
     if (RX100 >= 0 && RX100 < 184)
       SPO2 = pgm_read_byte_near(&spo2_table[RX100]);
 
-    Serial.print(F("BPM: "));          Serial.print(beatAvg);
-    Serial.print(F("  |  SpO2: "));    Serial.print(SPO2);    Serial.print('%');
-    Serial.print(F("  |  SpO2(f): ")); Serial.print(SPO2f);   Serial.print('%');
-    Serial.print(F("  |  IR: "));      Serial.print(irValue);
-    Serial.print(F("  |  Red: "));     Serial.println(redValue);
+    Serial.print(F("BPM: "));
+    Serial.print(beatAvg);
+    Serial.print(F("  |  SpO2: "));
+    Serial.print(SPO2);
+    Serial.print('%');
+    Serial.print(F("  |  SpO2(f): "));
+    Serial.print(SPO2f);
+    Serial.print('%');
+    Serial.print(F("  |  IR: "));
+    Serial.print(irValue);
+    Serial.print(F("  |  Red: "));
+    Serial.println(redValue);
   }
 
   // ── Kirim via MQTT setiap 2 detik ─────────────────────────────
