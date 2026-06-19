@@ -9,7 +9,7 @@ use PhpMqtt\Client\ConnectionSettings;
 $app = require_once __DIR__ . '/bootstrap/app.php';
 $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-$client = new MqttClient('192.168.18.11', 1883, 'laravel-subscriber');
+$client = new MqttClient('127.0.0.1', 1883, 'laravel-subscriber');
 $client->connect(new ConnectionSettings(), true);
 
 echo "MQTT subscriber running...\n";

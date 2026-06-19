@@ -366,6 +366,13 @@ void setup() {
   oled.clearDisplay();
   oled.display();
 
+  prefs.begin("oximeter", false);
+  filter_for_graph = prefs.getBool("filter", false);
+  draw_Red = prefs.getBool("drawRed", false);
+
+  String savedMqtt = prefs.getString("mqtt_ip", MQTT_SERVER);
+  savedMqtt.toCharArray(MQTT_SERVER, 40);
+
   // ── WiFiManager ──────────────────────────────────────────────
   WiFiManager wifiManager;
 
@@ -389,16 +396,15 @@ void setup() {
     strncpy(MQTT_SERVER, mqttParam.getValue(), 40);
     Serial.println("MQTT Server: " + String(MQTT_SERVER));
 
+    // Simpan ke flash supaya persist setelah restart
+    prefs.putString("mqtt_ip", String(MQTT_SERVER));
+
     draw_oled(8);
   }
 
   // Setup MQTT
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
   connectMQTT();
-
-  prefs.begin("oximeter", false);
-  filter_for_graph = prefs.getBool("filter", false);
-  draw_Red = prefs.getBool("drawRed", false);
 
   draw_oled(3);
   delay(3000);
@@ -422,6 +428,7 @@ void loop() {
   // ── Reset WiFi via Serial Monitor (ketik 'r') ─────────────────
   if (Serial.available() && Serial.read() == 'r') {
     Serial.println("Resetting WiFi settings...");
+    prefs.remove("mqtt_ip");
     WiFiManager wifiManager;
     wifiManager.resetSettings();
     ESP.restart();
@@ -510,7 +517,8 @@ void loop() {
   // ── Kirim via MQTT setiap 2 detik ─────────────────────────────
   if (now - lastSend >= SEND_INTERVAL) {
     lastSend = now;
-    if (mqtt.connected() && beatAvg > 0 && SPO2f > 0) {
+    if (
+      mqtt.connected() && beatAvg > 0 && SPO2f > 0 && redValue > 5000) {
       String payload = "{\"hr\":" + String(beatAvg) + ",\"spo2\":" + String(SPO2f) + "}";
       bool ok = mqtt.publish(MQTT_TOPIC, payload.c_str());
       Serial.println(ok ? "MQTT published: " + payload : "MQTT publish failed");

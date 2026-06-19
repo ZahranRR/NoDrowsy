@@ -781,7 +781,7 @@
 
   <script>
     // ── Config ────────────────────────────────────────────────────────
-    const LARAVEL_URL = 'http://192.168.18.11:8000';
+    const LARAVEL_URL = `${window.location.protocol}//${window.location.hostname}:8000`; //sesuai ip laptop
     const EAR_OPEN = 0.38;
     const EAR_CLOSED = 0.27;
     const EAR_THRESH = 0.30;
