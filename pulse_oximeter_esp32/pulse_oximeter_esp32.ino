@@ -26,7 +26,7 @@
 #include <pgmspace.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
-#include <PubSubClient.h>  // ← ganti HTTPClient & ArduinoJson
+#include <PubSubClient.h>
 
 // ─── WiFi & MQTT Config ───────────────────────────────────────────
 // const char* WIFI_SSID     = "watermelons";
@@ -151,6 +151,14 @@ long lastBeat = 0;
 long displaytime = 0;
 unsigned long lastMqttRetry = 0;
 const int MQTT_RETRY_INTERVAL = 5000;
+
+unsigned long fingerDetectedAt = 0;          // kapan jari pertama terdeteksi
+bool wasFingerDetected = false;              // status jari di loop sebelumnya
+const unsigned long WARMUP_DURATION = 5000;  // 5 detik warm-up (bisa 3000-5000)
+
+unsigned long lastFingerSeenAt = 0;                   // kapan terakhir kali jari terdeteksi valid
+const unsigned long NO_FINGER_SLEEP_TIMEOUT = 25000;  // 25 detik tanpa jari → sleep
+bool sleepTimerStarted = false;                       // supaya timer mulai dari boot juga
 
 // ─── Helper: cetak angka multi-digit di OLED ─────────────────────
 void print_digit(int x, int y, long val, char c = ' ', uint8_t field = 3, uint8_t sz = 2) {
@@ -311,23 +319,6 @@ void draw_oled(int msg) {
   oled.display();
 }
 
-// ─── Koneksi WiFi ─────────────────────────────────────────────────
-// void connectWiFi() {
-//   Serial.print("Connecting to WiFi");
-//   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-//   int retry = 0;
-//   while (WiFi.status() != WL_CONNECTED && retry < 20) {
-//     delay(500);
-//     Serial.print(".");
-//     retry++;
-//   }
-//   if (WiFi.status() == WL_CONNECTED) {
-//     Serial.println("\nWiFi connected! IP: " + WiFi.localIP().toString());
-//   } else {
-//     Serial.println("\nWiFi gagal, lanjut tanpa internet.");
-//   }
-// }
-
 // ─── Koneksi MQTT ────────────────────────────────────────────────
 void connectMQTT() {
   if (WiFi.status() != WL_CONNECTED) return;
@@ -416,6 +407,7 @@ void setup() {
   }
   sensor.setup();
   lastBeat = millis();
+  lastFingerSeenAt = millis();
 
   Serial.println(F("Siap!"));
 }
@@ -454,11 +446,14 @@ void loop() {
   sensor.nextSample();
 
   // ── Jari tidak diletakkan ──────────────────────────────────────
-  if (irValue < 5000) {
+  if (irValue < 10000 || redValue < 5000) {
     draw_oled(sleep_counter <= 50 ? 1 : 4);
     delay(200);
     ++sleep_counter;
-    if (sleep_counter > 100) {
+    wasFingerDetected = false;
+
+    if (now - lastFingerSeenAt >= NO_FINGER_SLEEP_TIMEOUT) {
+      Serial.println(F("25 detik tanpa jari, masuk sleep..."));
       go_sleep();
       sleep_counter = 0;
     }
@@ -467,6 +462,13 @@ void loop() {
 
   // ── Jari terdeteksi ───────────────────────────────────────────
   sleep_counter = 0;
+  lastFingerSeenAt = now;
+
+  if (!wasFingerDetected) {
+    fingerDetectedAt = now;
+    wasFingerDetected = true;
+    Serial.println(F("Jari terdeteksi, mulai warm-up..."));
+  }
 
   int16_t IR_signal, Red_signal;
   bool beatRed, beatIR;
@@ -517,11 +519,15 @@ void loop() {
   // ── Kirim via MQTT setiap 2 detik ─────────────────────────────
   if (now - lastSend >= SEND_INTERVAL) {
     lastSend = now;
-    if (
-      mqtt.connected() && beatAvg > 0 && SPO2f > 0 && redValue > 5000) {
+
+    bool warmupDone = (now - fingerDetectedAt) >= WARMUP_DURATION;
+
+    if (warmupDone && mqtt.connected() && beatAvg > 0 && SPO2f > 0 && redValue > 5000) {
       String payload = "{\"hr\":" + String(beatAvg) + ",\"spo2\":" + String(SPO2f) + "}";
       bool ok = mqtt.publish(MQTT_TOPIC, payload.c_str());
       Serial.println(ok ? "MQTT published: " + payload : "MQTT publish failed");
+    } else if (!warmupDone) {
+      Serial.println(F("Warm-up... data belum dikirim"));
     }
   }
 
