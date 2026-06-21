@@ -16,7 +16,7 @@ echo "MQTT subscriber running...\n";
 
 $client->subscribe('oximeter/data', function (string $topic, string $message) {
     echo "Received: $message\n";
-    
+
     $data = json_decode($message, true);
     if (!$data) return;
 
@@ -26,6 +26,9 @@ $client->subscribe('oximeter/data', function (string $topic, string $message) {
         'spo2'      => $data['spo2'] ?? 0,
         'timestamp' => now()->toTimeString(),
     ], 10);
+
+    // Tandai waktu terakhir kali data HR diterima (untuk deteksi jari aktif)
+    \Illuminate\Support\Facades\Cache::put('last_hr_received_at', now()->timestamp, 15);
 
     // Simpan ke DB tiap 5 detik
     $lastSaved = \Illuminate\Support\Facades\Cache::get('last_db_save');

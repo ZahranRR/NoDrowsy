@@ -132,6 +132,105 @@
       pointer-events: none;
     }
 
+    /*Status Card*/
+    /* ── Status Card (mandiri, mengisi sisa tinggi di bawah kamera) ── */
+    .status-card {
+      position: relative;
+      flex: 1;
+      margin-top: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      font-family: var(--font-mono);
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-align: center;
+      transition: all 0.4s ease;
+      isolation: isolate;
+    }
+
+    .status-card::before {
+      content: '';
+      position: absolute;
+      inset: -40%;
+      background: radial-gradient(circle, var(--status-glow, transparent) 0%, transparent 65%);
+      opacity: 0.5;
+      animation: status-pulse 3s ease-in-out infinite;
+      z-index: -1;
+    }
+
+    .status-card span {
+      position: relative;
+      z-index: 1;
+    }
+
+    @keyframes status-pulse {
+
+      0%,
+      100% {
+        transform: scale(0.9);
+        opacity: 0.35;
+      }
+
+      50% {
+        transform: scale(1.1);
+        opacity: 0.6;
+      }
+    }
+
+    .status-card.init {
+      color: var(--text2);
+      --status-glow: rgba(255, 255, 255, 0.06);
+    }
+
+    .status-card.alert {
+      background: rgba(0, 255, 136, 0.06);
+      color: var(--accent);
+      border-color: rgba(0, 255, 136, 0.3);
+      --status-glow: rgba(0, 255, 136, 0.35);
+    }
+
+    .status-card.warning {
+      background: rgba(255, 170, 0, 0.06);
+      color: var(--warn);
+      border-color: rgba(255, 170, 0, 0.3);
+      --status-glow: rgba(255, 170, 0, 0.35);
+    }
+
+    .status-card.drowsy {
+      background: rgba(255, 68, 102, 0.1);
+      color: var(--accent2);
+      border-color: rgba(255, 68, 102, 0.4);
+      --status-glow: rgba(255, 68, 102, 0.5);
+      animation: drowsy-shake 0.4s ease-in-out infinite;
+    }
+
+    .status-card.drowsy::before {
+      animation: status-pulse 0.8s ease-in-out infinite;
+    }
+
+    @keyframes drowsy-shake {
+
+      0%,
+      100% {
+        transform: translateX(0);
+      }
+
+      25% {
+        transform: translateX(-2px);
+      }
+
+      75% {
+        transform: translateX(2px);
+      }
+    }
+
     /* Corner brackets */
     .corner {
       position: absolute;
@@ -582,6 +681,12 @@
         aspect-ratio: 4/3;
       }
 
+      .left-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
       .right-panel {
         display: flex;
         flex-direction: column;
@@ -651,17 +756,20 @@
     <div class="main-grid">
 
       <!-- Camera -->
-      <div class="camera-wrap" id="cameraWrap">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="canvas"></canvas>
-        <div class="camera-overlay">
-          <div class="corner tl"></div>
-          <div class="corner tr"></div>
-          <div class="corner bl"></div>
-          <div class="corner br"></div>
-          <div class="no-face" id="noFace">WAJAH TIDAK TERDETEKSI</div>
-          <div class="cam-status init" id="camStatus">MEMUAT...</div>
+      <div class="left-panel">
+        <div class="camera-wrap" id="cameraWrap">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="canvas"></canvas>
+          <div class="camera-overlay">
+            <div class="corner tl"></div>
+            <div class="corner tr"></div>
+            <div class="corner bl"></div>
+            <div class="corner br"></div>
+            <div class="no-face" id="noFace">WAJAH TIDAK TERDETEKSI</div>
+          </div>
         </div>
+
+        <div class="cam-status init" id="camStatus"><span>MEMUAT...</span></div>
       </div>
 
       <!-- Right panel -->
@@ -735,6 +843,13 @@
                           font-weight: 700; 
                           color: var(--accent);
                         ">--</div>
+                <div id="baselineCountdown" style="
+                font-family: var(--font-mono);
+                font-size: 11px;
+                color: var(--text2);
+                margin-top: 4px;
+                display: none;
+              "></div>
               </div>
 
               <!-- Tombol Reset -->
@@ -758,7 +873,7 @@
                   <path d="M23 4v6h-6M1 20v-6h6" />
                   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                 </svg>
-                 RESET CARDIO <br> BASELINE
+                RESET CARDIO <br> BASELINE
               </button>
             </div>
 
@@ -872,6 +987,10 @@
         const baselineReady = data.baseline_ready === true;
         const baseline = data.baseline;
 
+        const baselineRemaining = data.baseline_remaining ?? 0;
+        const baselineActive = data.baseline_active === true;
+        const countdownEl = document.getElementById('baselineCountdown');
+
         // Update tampilan sensor
         document.getElementById('hrVal').textContent = hr > 0 ? hr.toFixed(0) : '--';
         document.getElementById('spo2Val').textContent = spo2 > 0 ? spo2.toFixed(1) : '--';
@@ -881,15 +1000,31 @@
 
         // Update status baseline
         if (!baselineReady) {
-          document.getElementById('baselineStatusText').textContent = 'MENGUMPULKAN...';
-          document.getElementById('baselineStatusText').style.color = 'var(--warn)';
           document.getElementById('baselineVal').textContent = '--';
           document.getElementById('baselineVal').style.color = 'var(--text2)';
+
+          countdownEl.style.display = 'block';
+          const mins = Math.floor(baselineRemaining / 60);
+          const secs = baselineRemaining % 60;
+          const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+
+          if (baselineActive) {
+            document.getElementById('baselineStatusText').textContent = 'MENGUMPULKAN...';
+            document.getElementById('baselineStatusText').style.color = 'var(--warn)';
+            countdownEl.textContent = `⏱ ${timeStr} tersisa`;
+            countdownEl.style.color = 'var(--warn)';
+          } else {
+            document.getElementById('baselineStatusText').textContent = 'JEDA (jari tidak terdeteksi)';
+            document.getElementById('baselineStatusText').style.color = 'var(--text2)';
+            countdownEl.textContent = `⏸ ${timeStr} tersisa (dijeda)`;
+            countdownEl.style.color = 'var(--text2)';
+          }
         } else {
           document.getElementById('baselineStatusText').textContent = 'TERKUNCI ✓';
           document.getElementById('baselineStatusText').style.color = 'var(--accent)';
           document.getElementById('baselineVal').textContent = baseline + ' BPM';
           document.getElementById('baselineVal').style.color = 'var(--accent)';
+          countdownEl.style.display = 'none';
         }
 
         // Logika serial
@@ -910,6 +1045,12 @@
       document.getElementById('baselineStatusText').style.color = 'var(--warn)';
       document.getElementById('baselineVal').textContent = '--';
       document.getElementById('baselineVal').style.color = 'var(--text2)';
+
+      const countdownEl = document.getElementById('baselineCountdown');
+      countdownEl.style.display = 'block';
+      countdownEl.textContent = '⏱ 2:00 tersisa';
+      countdownEl.style.color = 'var(--warn)';
+
       console.log('Baseline direset');
     }
 
@@ -918,8 +1059,8 @@
       if (cameraActive) return;
       cameraActive = true;
 
-      document.getElementById('camStatus').textContent = '⏳ KAMERA MENYALA...';
-      document.getElementById('camStatus').className = 'cam-status init';
+      document.getElementById('camStatus').querySelector('span').textContent = '⏳ KAMERA MENYALA...';
+      document.getElementById('camStatus').className = 'status-card init';
 
       try {
         const video = document.getElementById('video');
@@ -937,7 +1078,7 @@
         cameraInstance.start();
       } catch (e) {
         cameraActive = false;
-        document.getElementById('camStatus').textContent = 'IZIN KAMERA DITOLAK';
+        document.getElementById('camStatus').querySelector('span').textContent = 'IZIN KAMERA DITOLAK';
       }
     }
 
@@ -956,8 +1097,8 @@
       }
       if (cameraInstance) { cameraInstance.stop?.(); cameraInstance = null; }
 
-      document.getElementById('camStatus').textContent = 'MENUNGGU SENSOR HR...';
-      document.getElementById('camStatus').className = 'cam-status init';
+      document.getElementById('camStatus').querySelector('span').textContent = 'MENUNGGU SENSOR HR...';
+      document.getElementById('camStatus').className = 'status-card init';
       document.getElementById('earVal').textContent = '—';
       document.getElementById('modelVal').textContent = '—';
       document.getElementById('confBar').style.width = '0%';
@@ -984,8 +1125,8 @@
         status = '● SIAGA'; statusClass = 'alert';
       }
 
-      document.getElementById('camStatus').textContent = status;
-      document.getElementById('camStatus').className = `cam-status ${statusClass}`;
+      document.getElementById('camStatus').querySelector('span').textContent = status;
+      document.getElementById('camStatus').className = `status-card ${statusClass}`;
       document.getElementById('alertOverlay').classList.toggle('active', eyeDrowsy && modelDrowsy);
 
       const now = Date.now();
@@ -1059,8 +1200,8 @@
         document.querySelector('.loading-text').textContent = 'MEMUAT AI...';
         await loadAI();
         document.getElementById('loadingScreen').classList.add('hidden');
-        document.getElementById('camStatus').textContent = 'MENUNGGU SENSOR HR...';
-        document.getElementById('camStatus').className = 'cam-status init';
+        document.getElementById('camStatus').querySelector('span').textContent = 'MENUNGGU SENSOR HR...';
+        document.getElementById('camStatus').className = 'status-card init';
       } catch (e) {
         document.querySelector('.loading-text').textContent = 'GAGAL LOAD AI';
       }
