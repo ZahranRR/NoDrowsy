@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>DrowsyGuard</title>
+  <title>NoDrowsy</title>
   <link
     href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap"
     rel="stylesheet">
@@ -738,35 +738,13 @@
   <!-- Alert overlay -->
   <div class="alert-overlay" id="alertOverlay"></div>
 
-  <div style="font-family:'Syne',sans-serif; font-size:26px; font-weight:800; color:#00ff88; letter-spacing:-1px">
-    NoDrowsy
-  </div>
-  {{-- <div
-    style="font-family:'Space Mono',monospace; font-size:11px; color:#6b6b80; letter-spacing:3px; text-align:center">
-    PILIH GENDER PENGEMUDI<br>
-    <span style="font-size:9px; opacity:0.6">untuk kalibrasi threshold detak jantung</span>
-  </div> --}}
-  {{-- <div style="display:flex; gap:14px">
-    <button onclick="selectGender('male')" style="
-      padding:16px 28px; border-radius:14px;
-      border:1px solid rgba(68,136,255,0.4);
-      background:rgba(68,136,255,0.08); color:#4488ff;
-      font-family:'Space Mono',monospace; font-size:12px; font-weight:700;
-      cursor:pointer; letter-spacing:1px; line-height:1.6;
-    ">♂ PRIA<br><span style="font-size:9px; opacity:0.7">Threshold &lt; 76 BPM</span></button>
-    <button onclick="selectGender('female')" style="
-      padding:16px 28px; border-radius:14px;
-      border:1px solid rgba(255,68,102,0.4);
-      background:rgba(255,68,102,0.08); color:#ff4466;
-      font-family:'Space Mono',monospace; font-size:12px; font-weight:700;
-      cursor:pointer; letter-spacing:1px; line-height:1.6;
-    ">♀ WANITA<br><span style="font-size:9px; opacity:0.7">Threshold &lt; 81 BPM</span></button>
-  </div> --}}
   </div>
 
   <div class="app">
     <div class="header">
-      <div class="logo">No<span>Drowsy</span></div>
+      <div style="font-family:'Syne',sans-serif; font-size:26px; font-weight:800; color:#00ff88; letter-spacing:-1px">
+        NoDrowsy
+      </div>
       <div class="status-dot" id="statusDot"></div>
     </div>
 
