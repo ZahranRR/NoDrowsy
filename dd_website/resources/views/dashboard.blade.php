@@ -786,7 +786,7 @@
         </div>
 
         <!-- Confidence bars -->
-        <div class="confidence-section">
+        {{-- <div class="confidence-section">
           <div class="conf-header">
             <span class="conf-label">Drowsiness Confidence</span>
             <span class="conf-value" id="confPct">0%</span>
@@ -802,7 +802,7 @@
           <div class="bar-track">
             <div class="ear-bar-fill" id="earBar"></div>
           </div>
-        </div>
+        </div> --}}
 
         <!-- IoT data -->
         <div class="iot-section">
@@ -1099,6 +1099,20 @@
               pointRadius: 0,
               tension: 0.3,
               fill: true,
+              segment: {
+                borderColor: ctx => {
+                  const p0 = ctx.p0?.raw;
+                  const p1 = ctx.p1?.raw;
+                  if (p0?.cam || p1?.cam) return '#00ff88';
+                  return '#4488ff';
+                },
+                backgroundColor: ctx => {
+                  const p0 = ctx.p0?.raw;
+                  const p1 = ctx.p1?.raw;
+                  if (p0?.cam || p1?.cam) return 'rgba(0, 255, 136, 0.08)';
+                  return 'rgba(68, 136, 255, 0.08)';
+                },
+              },
             },
             {
               label: 'Baseline',
@@ -1192,7 +1206,7 @@
       const now = Date.now();
 
       // Tambah titik HR terbaru
-      hrChart.data.datasets[0].data.push({ x: now, y: hr });
+      hrChart.data.datasets[0].data.push({ x: now, y: hr, cam: cameraActive });
 
       // Update ujung kanan garis baseline
       const baselineData = hrChart.data.datasets[1].data;
