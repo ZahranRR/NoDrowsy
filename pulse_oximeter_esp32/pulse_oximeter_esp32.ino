@@ -160,6 +160,10 @@ unsigned long lastFingerSeenAt = 0;                   // kapan terakhir kali jar
 const unsigned long NO_FINGER_SLEEP_TIMEOUT = 25000;  // 25 detik tanpa jari → sleep
 bool sleepTimerStarted = false;                       // supaya timer mulai dari boot juga
 
+bool mqttConnected = false;
+unsigned long lastMqttReconnectAttempt = 0;
+const int MQTT_RECONNECT_INTERVAL = 5000;  // 5 detik
+
 // ─── Helper: cetak angka multi-digit di OLED ─────────────────────
 void print_digit(int x, int y, long val, char c = ' ', uint8_t field = 3, uint8_t sz = 2) {
   uint8_t ff = field;
@@ -321,13 +325,27 @@ void draw_oled(int msg) {
 
 // ─── Koneksi MQTT ────────────────────────────────────────────────
 void connectMQTT() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  if (mqtt.connected()) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected, skipping MQTT...");
+    return;
+  }
+
+  if (mqtt.connected()) {
+    mqttConnected = true;
+    return;
+  }
 
   Serial.print("Connecting MQTT...");
 
   if (mqtt.connect(MQTT_CLIENT)) {
     Serial.println("connected!");
+    mqttConnected = true;
+
+    fingerDetectedAt = millis();  // Reset warmup timer
+    wasFingerDetected = true;     // Anggap jari masih terdeteksi
+    lastFingerSeenAt = millis();  // Reset timeout
+    sleep_counter = 0;            // Reset sleep counter
+
     // Tampilkan MQTT connected di OLED sebentar
     oled.clearDisplay();
     oled.setTextSize(1);
@@ -412,6 +430,23 @@ void setup() {
   Serial.println(F("Siap!"));
 }
 
+// ─── Tambahkan fungsi baru ─────────────────────────────────────
+void handleMQTTReconnect() {
+  unsigned long now = millis();
+
+  // Cek setiap 5 detik
+  if (now - lastMqttReconnectAttempt >= MQTT_RECONNECT_INTERVAL) {
+    lastMqttReconnectAttempt = now;
+
+    if (!mqtt.connected()) {
+      Serial.println("MQTT disconnected, attempting reconnect...");
+      connectMQTT();
+    } else {
+      mqttConnected = true;
+    }
+  }
+}
+
 // ─── Loop ────────────────────────────────────────────────────────
 unsigned long lastSend = 0;
 const int SEND_INTERVAL = 2000;
@@ -426,20 +461,18 @@ void loop() {
     ESP.restart();
   }
 
-  // MQTT keep-alive (non-blocking)
-  if (!mqtt.connected()) {
-    unsigned long now2 = millis();
-    if (now2 - lastMqttRetry >= MQTT_RETRY_INTERVAL) {
-      lastMqttRetry = now2;
-      connectMQTT();
-    }
-  }
+  // ★ 1. Handle MQTT reconnect (GANTI dengan yang baru)
+  handleMQTTReconnect();  // Ganti blok if (!mqtt.connected()) yang lama
   mqtt.loop();
 
+  // ★ 2. Sensor check (PERTAHANKAN)
   sensor.check();
   long now = millis();
 
-  if (!sensor.available()) return;
+  if (!sensor.available()) {
+    delay(10);  // ★ TAMBAHKAN delay kecil
+    return;
+  }
 
   uint32_t irValue = sensor.getIR();
   uint32_t redValue = sensor.getRed();
@@ -520,14 +553,37 @@ void loop() {
   if (now - lastSend >= SEND_INTERVAL) {
     lastSend = now;
 
+    // ★ Jari terdeteksi dan data valid
+    bool fingerPresent = (irValue > 10000 && redValue > 5000);
     bool warmupDone = (now - fingerDetectedAt) >= WARMUP_DURATION;
+    bool dataValid = (beatAvg > 0 && SPO2f > 0);
 
-    if (warmupDone && mqtt.connected() && beatAvg > 0 && SPO2f > 0 && redValue > 5000) {
+    // ★ Kirim data jika MQTT connected DAN semua kondisi terpenuhi
+    if (fingerPresent && warmupDone && dataValid && mqttConnected) {
       String payload = "{\"hr\":" + String(beatAvg) + ",\"spo2\":" + String(SPO2f) + "}";
       bool ok = mqtt.publish(MQTT_TOPIC, payload.c_str());
-      Serial.println(ok ? "MQTT published: " + payload : "MQTT publish failed");
-    } else if (!warmupDone) {
-      Serial.println(F("Warm-up... data belum dikirim"));
+
+      if (ok) {
+        Serial.println("MQTT published: " + payload);
+      } else {
+        Serial.println("MQTT publish failed, disconnecting...");
+        mqtt.disconnect();
+        mqttConnected = false;
+      }
+    } else {
+      // ★ Logging untuk debugging (opsional)
+      if (!fingerPresent) {
+        // Serial.println("❌ No finger detected");
+      } else if (!warmupDone) {
+        int remaining = (WARMUP_DURATION - (now - fingerDetectedAt)) / 1000;
+        if (remaining % 2 == 0) {  // Log setiap 2 detik
+          Serial.printf("⏳ Warmup %ds remaining\n", remaining);
+        }
+      } else if (!dataValid) {
+        // Serial.println("❌ Invalid data (BPM/SpO2)");
+      } else if (!mqttConnected) {
+        // Serial.println("❌ MQTT not connected");
+      }
     }
   }
 

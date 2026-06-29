@@ -99,11 +99,28 @@ class IotController extends Controller
 
             if ($hr > 50) {
                 if (!$cameraWasActive) {
-                    $hrLow = $drop >= 9.3;
+                    // 3 polling berturut-turut drop ≥9.3% baru aktifkan kamera
+                    $dropConfirmCount = Cache::get('hr_drop_confirm', 0);
+
+                    if ($drop >= 9.3) {
+                        $dropConfirmCount++;
+                        Cache::put('hr_drop_confirm', $dropConfirmCount, 30);
+                    } else {
+                        // HR tidak drop → reset counter konfirmasi
+                        Cache::put('hr_drop_confirm', 0, 30);
+                    }
+
+                    $hrLow = $dropConfirmCount >= 3; //hr drop selama 3x polling
+
+                    if ($hrLow) {
+                        // Kamera aktif → tidak perlu reset, biarkan tetap aktif
+                        Cache::put('camera_active', true, 3600);
+                    }
                 } else {
-                    $hrLow = $drop >= 5.0;
+                    // Kamera sudah aktif, tidak mati
+                    $hrLow = true;
+                    Cache::put('camera_active', true, 3600);
                 }
-                Cache::put('camera_active', $hrLow, 3600);
             }
         }
 
@@ -122,12 +139,35 @@ class IotController extends Controller
         ]);
     }
 
+    public function history(Request $request)
+    {
+        $minutes = (int) $request->query('minutes', 30);
+        $minutes = min($minutes, 360); // cap 6 jam
+
+        $logs = \App\Models\SensorLog::where('created_at', '>=', now()->subMinutes($minutes))
+            ->orderBy('created_at', 'asc')
+            ->get(['hr', 'created_at'])
+            ->map(fn($row) => [
+                't' => $row->created_at->timestamp * 1000, // milliseconds untuk Chart.js
+                'hr' => $row->hr,
+            ]);
+
+        $baseline = Cache::get('hr_baseline');
+
+        return response()->json([
+            'data'     => $logs,
+            'baseline' => $baseline ? round($baseline, 1) : null,
+        ]);
+    }
+
     public function resetBaseline()
     {
         Cache::forget('hr_baseline');
         Cache::forget('hr_baseline_log');
         Cache::forget('baseline_elapsed_seconds');
         Cache::forget('baseline_last_tick_at');
+        Cache::forget('hr_drop_confirm');
+        Cache::forget('camera_active');
         return response()->json(['status' => 'ok']);
     }
 }

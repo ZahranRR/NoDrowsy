@@ -567,6 +567,24 @@
       font-family: var(--font-mono);
     }
 
+    .range-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text2);
+      padding: 3px 7px;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .range-btn.active-range {
+      background: rgba(0, 255, 136, 0.15);
+      border-color: rgba(0, 255, 136, 0.4);
+      color: var(--accent);
+    }
+
     /* ── Loading screen ── */
     .loading-screen {
       position: fixed;
@@ -883,6 +901,24 @@
           </div>
         </div>
 
+        <!-- HR Chart -->
+        <div class="iot-section" id="hrChartSection">
+          <div class="iot-header">
+            <div class="iot-dot"></div>
+            <div class="iot-title">Heart Rate History</div>
+            <!-- Tombol rentang waktu -->
+            <div style="display:flex; gap:4px; margin-left:auto;">
+              <button onclick="setRange(30)" id="btn30" class="range-btn active-range">30m</button>
+              <button onclick="setRange(60)" id="btn60" class="range-btn">1h</button>
+              <button onclick="setRange(180)" id="btn180" class="range-btn">3h</button>
+              <button onclick="setRange(360)" id="btn360" class="range-btn">6h</button>
+            </div>
+          </div>
+          <div style="position:relative; height:160px;">
+            <canvas id="hrChart"></canvas>
+          </div>
+        </div>
+
       </div><!-- end right-panel -->
     </div><!-- end main-grid -->
   </div>
@@ -894,19 +930,25 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
   <script>
     // ── Config ────────────────────────────────────────────────────────
     const LARAVEL_URL = `${window.location.protocol}//${window.location.hostname}:8000`; //sesuai ip laptop
     const EAR_OPEN = 0.38;
     const EAR_CLOSED = 0.27;
-    const EAR_THRESH = 0.30;
+    const EAR_THRESH = 0.385;
     const MODEL_THRESH = 0.6;
-    const EYE_LIMIT = 12;
+    const EYE_LIMIT = 30; // waktu berapa lama mata tertutup. 30 frame = 1 detik.
 
     // ── State ─────────────────────────────────────────────────────────
     let earValue = 0;
     let confidence = 0;
     let eyeClosedCount = 0;
+    let smoothEAR = 0.38; // ★ mulai dari nilai tengah yang wajar
+    const ALPHA = 0.3;    // ★ smoothing factor
     let faceDetected = false;
     let lastBeep = 0;
     let frameCount = 0;
@@ -914,6 +956,9 @@
     let isPredicting = false;
     let cameraActive = false;
     let cameraInstance = null;
+
+    let hrChart = null;
+    let currentRange = 30;
 
     // ── EAR Indices ───────────────────────────────────────────────────
     const LEFT_EYE = [362, 385, 387, 263, 373, 380];
@@ -958,7 +1003,9 @@
       const lm = results.multiFaceLandmarks[0];
       const earL = calcEAR(lm, LEFT_EYE);
       const earR = calcEAR(lm, RIGHT_EYE);
-      earValue = (earL + earR) / 2;
+      const rawEAR = (calcEAR(lm, LEFT_EYE) + calcEAR(lm, RIGHT_EYE)) / 2;
+      smoothEAR = ALPHA * rawEAR + (1 - ALPHA) * smoothEAR; //new
+      earValue = smoothEAR; //new
 
       if (earValue < EAR_THRESH) eyeClosedCount++;
       else eyeClosedCount = 0;
@@ -998,6 +1045,11 @@
         document.getElementById('spo2Val').className = 'iot-metric-value' + (spo2 > 0 && spo2 < 95 ? ' danger' : '');
         if (data.timestamp) document.getElementById('iotTime').textContent = data.timestamp;
 
+        // ★ Update live chart
+        if (hr > 0 && hrChart) {
+          addLivePoint(hr, baseline || null);
+        }
+
         // Update status baseline
         if (!baselineReady) {
           document.getElementById('baselineVal').textContent = '--';
@@ -1028,10 +1080,9 @@
         }
 
         // Logika serial
+        // Kamera aktif sekali, tidak pernah dimatikan otomatis oleh HR
         if (hrLow && !cameraActive) {
           await activateCamera();
-        } else if (!hrLow && cameraActive) {
-          deactivateCamera();
         }
 
       } catch (e) { }
@@ -1052,6 +1103,134 @@
       countdownEl.style.color = 'var(--warn)';
 
       console.log('Baseline direset');
+    }
+
+    // ── HR Chart ──────────────────────────────────────────────────────
+    function initChart() {
+      const ctx = document.getElementById('hrChart').getContext('2d');
+      hrChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          datasets: [
+            {
+              label: 'Heart Rate',
+              data: [],
+              borderColor: '#4488ff',
+              backgroundColor: 'rgba(68, 136, 255, 0.08)',
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.3,
+              fill: true,
+            },
+            {
+              label: 'Baseline',
+              data: [],
+              borderColor: 'rgba(255, 170, 0, 0.7)',
+              borderWidth: 1.5,
+              borderDash: [6, 4],
+              pointRadius: 0,
+              fill: false,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(18,18,26,0.95)',
+              titleColor: '#6b6b80',
+              bodyColor: '#e8e8f0',
+              borderColor: 'rgba(255,255,255,0.07)',
+              borderWidth: 1,
+              titleFont: { family: 'Space Mono', size: 9 },
+              bodyFont: { family: 'Space Mono', size: 11 },
+              callbacks: {
+                title: (items) => new Date(items[0].parsed.x).toLocaleTimeString('id-ID'),
+                label: (item) => item.datasetIndex === 0
+                  ? `HR: ${item.parsed.y} BPM`
+                  : `Baseline: ${item.parsed.y} BPM`,
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'time',
+              time: { unit: 'minute', displayFormats: { minute: 'HH:mm' } },
+              grid: { color: 'rgba(255,255,255,0.04)' },
+              ticks: { color: '#6b6b80', font: { family: 'Space Mono', size: 9 }, maxTicksLimit: 6 },
+            },
+            y: {
+              min: 40,
+              max: 140,
+              grid: { color: 'rgba(255,255,255,0.04)' },
+              ticks: { color: '#6b6b80', font: { family: 'Space Mono', size: 9 }, stepSize: 20 },
+            }
+          }
+        }
+      });
+    }
+
+    async function loadChartData(minutes) {
+      try {
+        const res = await fetch(`${LARAVEL_URL}/api/sensor/history?minutes=${minutes}`);
+        const json = await res.json();
+
+        hrChart.data.datasets[0].data = json.data.map(d => ({ x: d.t, y: d.hr }));
+
+        // Garis baseline — tarik dari titik paling awal sampai paling akhir
+        if (json.baseline && json.data.length > 0) {
+          const first = json.data[0].t;
+          const last = json.data[json.data.length - 1].t;
+          hrChart.data.datasets[1].data = [
+            { x: first, y: json.baseline },
+            { x: last, y: json.baseline },
+          ];
+        } else {
+          hrChart.data.datasets[1].data = [];
+        }
+
+        hrChart.update();
+      } catch (e) { }
+    }
+
+    function setRange(minutes) {
+      currentRange = minutes;
+
+      // Update tombol aktif
+      ['30', '60', '180', '360'].forEach(m => {
+        const btn = document.getElementById(`btn${m}`);
+        if (btn) btn.className = 'range-btn' + (parseInt(m) === minutes ? ' active-range' : '');
+      });
+
+      loadChartData(minutes);
+    }
+
+    function addLivePoint(hr, baseline) {
+      if (!hrChart) return;
+      const now = Date.now();
+
+      // Tambah titik HR terbaru
+      hrChart.data.datasets[0].data.push({ x: now, y: hr });
+
+      // Update ujung kanan garis baseline
+      const baselineData = hrChart.data.datasets[1].data;
+      if (baseline && baselineData.length > 0) {
+        baselineData[baselineData.length - 1] = { x: now, y: baseline };
+      } else if (baseline && baselineData.length === 0) {
+        const oldest = hrChart.data.datasets[0].data[0]?.x || now;
+        hrChart.data.datasets[1].data = [{ x: oldest, y: baseline }, { x: now, y: baseline }];
+      }
+
+      // Buang data di luar rentang waktu yang dipilih
+      const cutoff = now - currentRange * 60 * 1000;
+      hrChart.data.datasets[0].data = hrChart.data.datasets[0].data.filter(d => d.x >= cutoff);
+      if (baselineData.length > 0) baselineData[0].x = cutoff;
+
+      hrChart.update('none'); // 'none' = no animation, lebih ringan untuk live update
     }
 
     // ── Aktifkan kamera ───────────────────────────────────────────────
@@ -1202,6 +1381,10 @@
         document.getElementById('loadingScreen').classList.add('hidden');
         document.getElementById('camStatus').querySelector('span').textContent = 'MENUNGGU SENSOR HR...';
         document.getElementById('camStatus').className = 'status-card init';
+
+        // ★ Inisialisasi chart langsung saat halaman dibuka
+        initChart();
+        loadChartData(currentRange);
       } catch (e) {
         document.querySelector('.loading-text').textContent = 'GAGAL LOAD AI';
       }

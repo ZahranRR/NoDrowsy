@@ -666,9 +666,12 @@
     const EYE_LIMIT = 30;
 
     let earValue = 0, confidence = 0, eyeClosedCount = 0;
+    let smoothEAR = 0.38; // ★ mulai dari nilai tengah yang wajar
+    const ALPHA = 0.3;    // ★ smoothing factor
     let faceDetected = false, lastBeep = 0, frameCount = 0;
     let model, scaler, isPredicting = false;
 
+    //log
     let earLog = [];
     const EAR_LOG_MAX = 50; // simpan 50 entri terakhir
     let isLogging = true;
@@ -737,7 +740,9 @@
       document.getElementById('noFace').style.display = 'none';
 
       const lm = results.multiFaceLandmarks[0];
-      earValue = (calcEAR(lm, LEFT_EYE) + calcEAR(lm, RIGHT_EYE)) / 2;
+      const rawEAR = (calcEAR(lm, LEFT_EYE) + calcEAR(lm, RIGHT_EYE)) / 2;
+      smoothEAR = ALPHA * rawEAR + (1 - ALPHA) * smoothEAR;
+      earValue = smoothEAR;;
       if (earValue < EAR_THRESH) eyeClosedCount++;
       else eyeClosedCount = 0;
 
