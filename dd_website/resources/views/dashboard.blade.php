@@ -986,6 +986,10 @@
     const MODEL_THRESH = 0.6;
     const EYE_LIMIT = 1500; // waktu berapa lama mata tertutup. 1500ms = 1.5 detik
 
+    const HEAD_TURN_MIN = 0.85;
+    const HEAD_TURN_MAX = 1.20;
+    const LOW_EAR_STREAK_NEEDED = 3;
+
     // ── State ─────────────────────────────────────────────────────────
     let earValue = 0;
     let confidence = 0;
@@ -993,6 +997,9 @@
     let smoothEAR = 0.44; // ★ mulai dari nilai tengah yang wajar
     const ALPHA = 0.3;    // ★ smoothing factor
     let faceDetected = false;
+    let isFrontal = true;
+    let headTurnRatio = 1;
+    let lowEARStreak = 0;
     let lastBeep = 0;
     let frameCount = 0;
     let model, scaler;
@@ -1017,6 +1024,15 @@
       return C === 0 ? 0 : (A + B) / (2 * C);
     }
 
+    function calcHeadTurnRatio(lm) {
+      const nose = lm[1];
+      const leftCheek = lm[234];
+      const rightCheek = lm[454];
+      const distLeft = dist(nose, leftCheek);
+      const distRight = dist(nose, rightCheek);
+      return distRight === 0 ? 1 : distLeft / distRight;
+    }
+
     // ── MediaPipe ────────────────────────────────────────────────────
     const faceMesh = new FaceMesh({
       locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
@@ -1035,6 +1051,7 @@
       if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
         faceDetected = false;
         eyeClosedStart = null;
+        lowEARStreak = 0;
         document.getElementById('noFace').style.display = 'block';
         updateUI();
         return;
@@ -1044,19 +1061,30 @@
       document.getElementById('noFace').style.display = 'none';
 
       const lm = results.multiFaceLandmarks[0];
-      const earL = calcEAR(lm, LEFT_EYE);
-      const earR = calcEAR(lm, RIGHT_EYE);
-      const rawEAR = (calcEAR(lm, LEFT_EYE) + calcEAR(lm, RIGHT_EYE)) / 2;
-      smoothEAR = ALPHA * rawEAR + (1 - ALPHA) * smoothEAR; //new
-      earValue = smoothEAR; //new
 
-      if (earValue < EAR_THRESH) {
-        if (eyeClosedStart === null) eyeClosedStart = Date.now();
+      headTurnRatio = calcHeadTurnRatio(lm);
+      isFrontal = headTurnRatio >= HEAD_TURN_MIN && headTurnRatio <= HEAD_TURN_MAX;
+
+      const leftEAR = calcEAR(lm, LEFT_EYE);
+      const rightEAR = calcEAR(lm, RIGHT_EYE);
+      const rawEAR = Math.max(leftEAR, rightEAR); // tahan terhadap distorsi saat menoleh
+
+      smoothEAR = ALPHA * rawEAR + (1 - ALPHA) * smoothEAR;
+      earValue = smoothEAR;
+
+      if (earValue < EAR_THRESH && isFrontal) {
+        lowEARStreak++;
+        if (lowEARStreak >= LOW_EAR_STREAK_NEEDED && eyeClosedStart === null) {
+          eyeClosedStart = Date.now();
+        }
+      } else if (!isFrontal) {
+        // kepala menoleh → jeda, jangan reset total
       } else {
+        lowEARStreak = 0;
         eyeClosedStart = null;
       }
 
-      if (frameCount % 10 === 0) {
+      if (frameCount % 10 === 0 && isFrontal) {
         const flat = [];
         for (let i = 0; i < 468; i++) {
           flat.push(lm[i].x);
@@ -1327,6 +1355,7 @@
       earValue = 0;
       confidence = 0;
       eyeClosedStart = null;
+      lowEARStreak = 0;
       faceDetected = false;
 
       const video = document.getElementById('video');
@@ -1356,7 +1385,7 @@
 
       const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
       const eyeDrowsy = eyeClosedDuration >= EYE_LIMIT;
-      const modelDrowsy = confidence >= MODEL_THRESH;
+      const modelDrowsy = confidence >= MODEL_THRESH && isFrontal;
 
       let status, statusClass;
       if (!faceDetected) {
