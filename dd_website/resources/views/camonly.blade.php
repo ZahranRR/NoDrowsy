@@ -178,6 +178,7 @@
       border-radius: 100px;
       backdrop-filter: blur(6px);
       display: none;
+      z-index: 100;
     }
 
     .status-card {
@@ -448,6 +449,63 @@
       animation: blink 1s infinite;
     }
 
+    /* face guide */
+    .face-guide-img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      object-position: center 20%;
+      /* geser turun/naik biar pas sama posisi kepala di frame */
+      opacity: 0.5;
+      pointer-events: none;
+      transition: filter 0.3s, opacity 0.3s;
+      z-index: 10;
+    }
+
+    .face-guide-img.out-of-range {
+      filter: drop-shadow(0 0 4px rgba(255, 68, 102, 0.5)) hue-rotate(140deg) saturate(3);
+    }
+
+    .distance-hint {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      right: 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(6px);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--text2);
+    }
+
+    .distance-hint .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+
+    .distance-hint.warn {
+      border-color: rgba(255, 68, 102, 0.4);
+      color: var(--accent2);
+    }
+
+    .distance-hint.warn .dot {
+      background: var(--accent2);
+    }
+    /* face guide */
+
     @keyframes blink {
 
       0%,
@@ -576,6 +634,14 @@
             <div class="corner bl"></div>
             <div class="corner br"></div>
             <div class="no-face" id="noFace">WAJAH TIDAK TERDETEKSI</div>
+
+            <img src="/assets/outline.png" class="face-guide-img" id="faceGuide" alt="">
+
+            <!-- ★ Info jarak -->
+            <div class="distance-hint" id="distanceHint">
+              <div class="dot"></div>
+              <span id="distanceText">Posisikan wajah Anda di dalam outline untuk hasil terbaik</span>
+            </div>
           </div>
         </div>
         <div class="status-card init" id="camStatus"><span>MEMUAT...</span></div>
@@ -661,12 +727,12 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
 
   <script>
-    const EAR_OPEN = 0.38, EAR_CLOSED = 0.27, EAR_THRESH = 0.385;
+    const EAR_OPEN = 0.44, EAR_CLOSED = 0.31, EAR_THRESH = 0.36;
     const MODEL_THRESH = 0.6;
-    const EYE_LIMIT = 30;
+    const EYE_LIMIT = 1500;
 
-    let earValue = 0, confidence = 0, eyeClosedCount = 0;
-    let smoothEAR = 0.38; // ★ mulai dari nilai tengah yang wajar
+    let earValue = 0, confidence = 0, eyeClosedStart = null;
+    let smoothEAR = 0.44; // ★ mulai dari nilai tengah yang wajar
     const ALPHA = 0.3;    // ★ smoothing factor
     let faceDetected = false, lastBeep = 0, frameCount = 0;
     let model, scaler, isPredicting = false;
@@ -730,7 +796,7 @@
 
       if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
         faceDetected = false;
-        eyeClosedCount = 0;
+        eyeClosedStart = null;
         document.getElementById('noFace').style.display = 'block';
         updateUI();
         return;
@@ -743,8 +809,11 @@
       const rawEAR = (calcEAR(lm, LEFT_EYE) + calcEAR(lm, RIGHT_EYE)) / 2;
       smoothEAR = ALPHA * rawEAR + (1 - ALPHA) * smoothEAR;
       earValue = smoothEAR;;
-      if (earValue < EAR_THRESH) eyeClosedCount++;
-      else eyeClosedCount = 0;
+      if (earValue < EAR_THRESH) {
+        if (eyeClosedStart === null) eyeClosedStart = Date.now();
+      } else {
+        eyeClosedStart = null;
+      }
 
       if (frameCount % 5 === 0) addEarLog(earValue.toFixed(4), earValue < EAR_THRESH);
 
@@ -757,7 +826,8 @@
     });
 
     function updateUI() {
-      const eyeDrowsy = eyeClosedCount >= EYE_LIMIT;
+      const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
+      const eyeDrowsy = eyeClosedDuration >= EYE_LIMIT;
       const modelDrowsy = confidence >= MODEL_THRESH;
 
       let status, statusClass;
