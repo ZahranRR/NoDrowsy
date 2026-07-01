@@ -504,6 +504,7 @@
     .distance-hint.warn .dot {
       background: var(--accent2);
     }
+
     /* face guide */
 
     @keyframes blink {
@@ -602,6 +603,20 @@
         margin: 0;
       }
     }
+
+    #earLog {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      line-height: 1.8;
+
+      max-height: 150px;
+      /* tinggi tetap */
+      overflow-y: auto;
+      /* muncul scrollbar */
+      overflow-x: hidden;
+
+      color: var(--text2);
+    }
   </style>
 </head>
 
@@ -617,7 +632,7 @@
 
   <div class="app">
     <div class="header">
-      <div class="logo">No<span>Drowsy</span></div>
+      <div class="logo">NoDrowsy<span>Cam</span></div>
       <div class="status-dot"></div>
     </div>
 
@@ -686,7 +701,6 @@
           border: 1px solid var(--border);
           border-radius: 16px;
           padding: 16px;
-          margin: 10px 16px 0;
         ">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
             <span
@@ -731,29 +745,34 @@
     const MODEL_THRESH = 0.6;
     const EYE_LIMIT = 1500;
 
+    const HEAD_TURN_MIN = 0.85;
+    const HEAD_TURN_MAX = 1.20;
+    const LOW_EAR_STREAK_NEEDED = 3;
+
     let earValue = 0, confidence = 0, eyeClosedStart = null;
     let smoothEAR = 0.44; // ★ mulai dari nilai tengah yang wajar
     const ALPHA = 0.3;    // ★ smoothing factor
     let faceDetected = false, lastBeep = 0, frameCount = 0;
     let model, scaler, isPredicting = false;
+    let isFrontal = true;
 
     //log
     let earLog = [];
     const EAR_LOG_MAX = 50; // simpan 50 entri terakhir
     let isLogging = true;
 
-    function addEarLog(ear, closed) {
+    function addEarLog(ear, closed, headRatio) {
       if (!isLogging) return;
 
       const time = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      earLog.unshift({ time, ear, closed }); // unshift = terbaru di atas
+      earLog.unshift({ time, ear, closed, headRatio: headRatio.toFixed(3) });
       if (earLog.length > EAR_LOG_MAX) earLog.pop();
 
       const el = document.getElementById('earLog');
       el.innerHTML = earLog.map(e => {
         const color = e.closed ? 'var(--accent2)' : 'var(--accent)';
         const label = e.closed ? ' ◀ TERTUTUP' : '';
-        return `<div style="color:${color}">${e.time} &nbsp; EAR: <b>${e.ear}</b>${label}</div>`;
+        return `<div style="color:${color}">${e.time} &nbsp; EAR: <b>${e.ear}</b> &nbsp; HTR: <b>${e.headRatio}</b>${label}</div>`;
       }).join('');
     }
 
@@ -782,6 +801,16 @@
     const RIGHT_EYE = [33, 160, 158, 133, 153, 144];
 
     function dist(a, b) { return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2); }
+
+    function calcHeadTurnRatio(lm) {
+      const nose = lm[1];
+      const leftCheek = lm[234];
+      const rightCheek = lm[454];
+      const distLeft = dist(nose, leftCheek);
+      const distRight = dist(nose, rightCheek);
+      return distRight === 0 ? 1 : distLeft / distRight;
+    }
+
     function calcEAR(lm, idx) {
       const A = dist(lm[idx[1]], lm[idx[5]]);
       const B = dist(lm[idx[2]], lm[idx[4]]);
@@ -797,6 +826,7 @@
       if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
         faceDetected = false;
         eyeClosedStart = null;
+        lowEARStreak = 0;
         document.getElementById('noFace').style.display = 'block';
         updateUI();
         return;
@@ -806,18 +836,32 @@
       document.getElementById('noFace').style.display = 'none';
 
       const lm = results.multiFaceLandmarks[0];
-      const rawEAR = (calcEAR(lm, LEFT_EYE) + calcEAR(lm, RIGHT_EYE)) / 2;
+
+      headTurnRatio = calcHeadTurnRatio(lm);
+      isFrontal = headTurnRatio >= HEAD_TURN_MIN && headTurnRatio <= HEAD_TURN_MAX;
+
+      const leftEAR = calcEAR(lm, LEFT_EYE);
+      const rightEAR = calcEAR(lm, RIGHT_EYE);
+      const rawEAR = Math.max(leftEAR, rightEAR); // tahan terhadap distorsi saat menoleh
+
       smoothEAR = ALPHA * rawEAR + (1 - ALPHA) * smoothEAR;
-      earValue = smoothEAR;;
-      if (earValue < EAR_THRESH) {
-        if (eyeClosedStart === null) eyeClosedStart = Date.now();
+      earValue = smoothEAR;
+
+      if (earValue < EAR_THRESH && isFrontal) {
+        lowEARStreak++;
+        if (lowEARStreak >= LOW_EAR_STREAK_NEEDED && eyeClosedStart === null) {
+          eyeClosedStart = Date.now();
+        }
+      } else if (!isFrontal) {
+        // kepala menoleh → jeda, jangan reset total
       } else {
+        lowEARStreak = 0;
         eyeClosedStart = null;
       }
 
-      if (frameCount % 5 === 0) addEarLog(earValue.toFixed(4), earValue < EAR_THRESH);
+      if (frameCount % 5 === 0) addEarLog(earValue.toFixed(4), earValue < EAR_THRESH, headTurnRatio);
 
-      if (frameCount % 10 === 0) {
+      if (frameCount % 10 === 0 && isFrontal) {
         const flat = [];
         for (let i = 0; i < 468; i++) { flat.push(lm[i].x); flat.push(lm[i].y); }
         predictLocal(flat);
@@ -828,7 +872,7 @@
     function updateUI() {
       const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
       const eyeDrowsy = eyeClosedDuration >= EYE_LIMIT;
-      const modelDrowsy = confidence >= MODEL_THRESH;
+      const modelDrowsy = confidence >= MODEL_THRESH && isFrontal;
 
       let status, statusClass;
       if (!faceDetected) {

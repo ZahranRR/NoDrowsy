@@ -801,9 +801,7 @@
 
   <div class="app">
     <div class="header">
-      <div style="font-family:'Syne',sans-serif; font-size:26px; font-weight:800; color:#00ff88; letter-spacing:-1px">
-        NoDrowsy
-      </div>
+      <div class="logo">NoDrowsy<span></span></div>
       <div class="status-dot" id="statusDot"></div>
     </div>
 
