@@ -917,7 +917,7 @@
     const LARAVEL_URL = `${window.location.protocol}//${window.location.hostname}:8000`; //sesuai ip laptop
     const EAR_OPEN = 0.38;
     const EAR_CLOSED = 0.27;
-    const EAR_THRESH = 0.385;
+    const EAR_THRESH = 0.32;
     const MODEL_THRESH = 0.6;
     const EYE_LIMIT = 30; // waktu berapa lama mata tertutup. 30 frame = 1 detik.
 
@@ -1272,10 +1272,14 @@
       document.getElementById('camStatus').className = 'status-card init';
       document.getElementById('earVal').textContent = '—';
       document.getElementById('modelVal').textContent = '—';
-      document.getElementById('confBar').style.width = '0%';
-      document.getElementById('earBar').style.width = '0%';
-      document.getElementById('confPct').textContent = '0%';
-      document.getElementById('earPct').textContent = '0%';
+      const confBarEl = document.getElementById('confBar');
+      const earBarEl = document.getElementById('earBar');
+      const confPctEl = document.getElementById('confPct');
+      const earPctEl = document.getElementById('earPct');
+      if (confBarEl) confBarEl.style.width = '0%';
+      if (earBarEl) earBarEl.style.width = '0%';
+      if (confPctEl) confPctEl.textContent = '0%';
+      if (earPctEl) earPctEl.textContent = '0%';
     }
 
     // ── Update UI ─────────────────────────────────────────────────────
@@ -1308,20 +1312,25 @@
       ));
       document.getElementById('earVal').textContent = earValue.toFixed(3);
       document.getElementById('earVal').className = 'metric-value' + (eyeDrowsy ? ' danger' : ' good');
-      document.getElementById('earPct').textContent = earPct.toFixed(0) + '%';
-      document.getElementById('earBar').style.width = earPct + '%';
-      document.getElementById('earBar').className = 'ear-bar-fill' + (earValue < EAR_THRESH ? ' low' : '');
       document.getElementById('earCard').classList.toggle('warn-active', eyeDrowsy);
+
+      // ★ Cek null karena confidence section di-comment di HTML
+      const earBarEl = document.getElementById('earBar');
+      const earPctEl = document.getElementById('earPct');
+      if (earBarEl) { earBarEl.style.width = earPct + '%'; earBarEl.className = 'ear-bar-fill' + (earValue < EAR_THRESH ? ' low' : ''); }
+      if (earPctEl) earPctEl.textContent = earPct.toFixed(0) + '%';
 
       const confPct = (confidence * 100).toFixed(1);
       document.getElementById('modelVal').textContent = confPct + '%';
       document.getElementById('modelVal').className = 'metric-value' + (modelDrowsy ? ' danger' : '');
-      document.getElementById('confPct').textContent = confPct + '%';
-      document.getElementById('confPct').style.color = modelDrowsy ? 'var(--accent2)' : 'var(--accent)';
-      document.getElementById('confBar').style.width = confPct + '%';
-      document.getElementById('confBar').className = 'bar-fill' +
-        (confidence >= MODEL_THRESH ? ' high' : confidence >= 0.4 ? ' medium' : '');
       document.getElementById('modelCard').classList.toggle('warn-active', modelDrowsy);
+
+      // ★ Cek null karena confidence bars di-comment di HTML
+      const confBarEl = document.getElementById('confBar');
+      const confPctEl = document.getElementById('confPct');
+      if (confBarEl) confBarEl.style.width = confPct + '%';
+      if (confBarEl) confBarEl.className = 'bar-fill' + (confidence >= MODEL_THRESH ? ' high' : confidence >= 0.4 ? ' medium' : '');
+      if (confPctEl) { confPctEl.textContent = confPct + '%'; confPctEl.style.color = modelDrowsy ? 'var(--accent2)' : 'var(--accent)'; }
     }
 
     // ── Beep ──────────────────────────────────────────────────────────
