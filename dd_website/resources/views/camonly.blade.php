@@ -742,19 +742,26 @@
 
   <script>
     const EAR_OPEN = 0.44, EAR_CLOSED = 0.31, EAR_THRESH = 0.36;
+    const EAR_LEVEL1_MS = 800;
+    const EAR_LEVEL2_MS = 1500;
     const MODEL_THRESH = 0.6;
-    const EYE_LIMIT = 1500;
+    const MODEL_STREAK_NEEDED = 3;
 
     const HEAD_TURN_MIN = 0.85;
     const HEAD_TURN_MAX = 1.20;
     const LOW_EAR_STREAK_NEEDED = 3;
 
     let earValue = 0, confidence = 0, eyeClosedStart = null;
-    let smoothEAR = 0.44; // ★ mulai dari nilai tengah yang wajar
-    const ALPHA = 0.3;    // ★ smoothing factor
+    let smoothEAR = 0.44;
+    const ALPHA = 0.3;
     let faceDetected = false, lastBeep = 0, frameCount = 0;
     let model, scaler, isPredicting = false;
     let isFrontal = true;
+    let headTurnRatio = 1;
+    let lowEARStreak = 0;
+    let modelHighStreak = 0;
+    let yawnActive = false;
+    let hrLow = false; // tidak dipakai di camonly (tidak ada sensor HR), tapi computeDrowsinessLevel butuh variabel ini
 
     //log
     let earLog = [];
@@ -818,6 +825,21 @@
       return C === 0 ? 0 : (A + B) / (2 * C);
     }
 
+    function computeDrowsinessLevel() {
+      const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
+      const earLevel = eyeClosedDuration >= EAR_LEVEL2_MS ? 2
+        : (eyeClosedDuration >= EAR_LEVEL1_MS ? 1 : 0);
+
+      const hrLevelValue = hrLow ? 2 : 0; // selalu 0 di camonly, tidak ada sensor HR
+      const modelLevel = yawnActive ? 1 : 0;
+
+      if (earLevel === 2 && (modelLevel === 1 || hrLevelValue >= 1)) return 3;
+      if (earLevel === 2) return 2;
+      if (earLevel === 1 && (modelLevel === 1 || hrLevelValue >= 1)) return 2;
+      if (earLevel === 1 || modelLevel === 1 || hrLevelValue >= 1) return 1;
+      return 0;
+    }
+
     const faceMesh = new FaceMesh({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
     faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     faceMesh.onResults(async (results) => {
@@ -870,16 +892,18 @@
     });
 
     function updateUI() {
+      const level = computeDrowsinessLevel();
       const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
-      const eyeDrowsy = eyeClosedDuration >= EYE_LIMIT;
-      const modelDrowsy = confidence >= MODEL_THRESH && isFrontal;
+      const eyeDrowsy = eyeClosedDuration >= EAR_LEVEL2_MS;
 
       let status, statusClass;
       if (!faceDetected) {
         status = 'TIDAK ADA WAJAH'; statusClass = 'init';
-      } else if (eyeDrowsy && modelDrowsy) {
-        status = '⚠ MENGANTUK!'; statusClass = 'drowsy';
-      } else if (eyeDrowsy || modelDrowsy) {
+      } else if (level === 3) {
+        status = '⚠ MICROSLEEP ALERT'; statusClass = 'drowsy';
+      } else if (level === 2) {
+        status = '⚠ MENGANTUK'; statusClass = 'drowsy';
+      } else if (level === 1) {
         status = '△ WASPADA'; statusClass = 'warning';
       } else {
         status = '● SIAGA'; statusClass = 'alert';
@@ -887,10 +911,10 @@
 
       document.getElementById('camStatus').querySelector('span').textContent = status;
       document.getElementById('camStatus').className = `status-card ${statusClass}`;
-      document.getElementById('alertOverlay').classList.toggle('active', eyeDrowsy && modelDrowsy);
+      document.getElementById('alertOverlay').classList.toggle('active', level >= 2);
 
       const now = Date.now();
-      if ((eyeDrowsy || modelDrowsy) && now - lastBeep > 1000) { playBeep(); lastBeep = now; }
+      if (level >= 2 && now - lastBeep > 1000) { playBeep(); lastBeep = now; }
 
       const earPct = Math.max(0, Math.min(100, (earValue - EAR_CLOSED) / (EAR_OPEN - EAR_CLOSED) * 100));
       document.getElementById('earVal').textContent = earValue.toFixed(3);
@@ -902,12 +926,12 @@
 
       const confPct = (confidence * 100).toFixed(1);
       document.getElementById('modelVal').textContent = confPct + '%';
-      document.getElementById('modelVal').className = 'metric-value' + (modelDrowsy ? ' danger' : '');
+      document.getElementById('modelVal').className = 'metric-value' + (yawnActive ? ' danger' : '');
       document.getElementById('confPct').textContent = confPct + '%';
-      document.getElementById('confPct').style.color = modelDrowsy ? 'var(--accent2)' : 'var(--accent)';
+      document.getElementById('confPct').style.color = yawnActive ? 'var(--accent2)' : 'var(--accent)';
       document.getElementById('confBar').style.width = confPct + '%';
       document.getElementById('confBar').className = 'bar-fill' + (confidence >= MODEL_THRESH ? ' high' : confidence >= 0.4 ? ' medium' : '');
-      document.getElementById('modelCard').classList.toggle('warn-active', modelDrowsy);
+      document.getElementById('modelCard').classList.toggle('warn-active', yawnActive);
     }
 
     function playBeep() {
@@ -937,10 +961,17 @@
         const output = model.predict(input);
         confidence = output.dataSync()[0];
         input.dispose(); output.dispose();
+
+        if (confidence >= MODEL_THRESH) {
+          modelHighStreak++;
+          yawnActive = modelHighStreak >= MODEL_STREAK_NEEDED;
+        } else {
+          modelHighStreak = 0;
+          yawnActive = false;
+        }
       } catch (e) { console.error('PREDICT ERROR:', e); }
       finally { isPredicting = false; }
     }
-
     // ★ Boot: langsung aktifkan kamera setelah AI load
     (async () => {
       try {

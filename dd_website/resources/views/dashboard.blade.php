@@ -979,27 +979,31 @@
 
   <script>
     // ── Config ────────────────────────────────────────────────────────
-    const LARAVEL_URL = `${window.location.protocol}//${window.location.hostname}:8000`; //sesuai ip laptop
-    const EAR_OPEN = 0.38;
-    const EAR_CLOSED = 0.27;
-    const EAR_THRESH = 0.32;
+    const LARAVEL_URL = `${window.location.protocol}//${window.location.hostname}:8000`;
+    const EAR_OPEN = 0.44;
+    const EAR_CLOSED = 0.31;
+    const EAR_LEVEL1_MS = 800;   // gejala
+    const EAR_LEVEL2_MS = 1500;  // konfirmasi
+    const EAR_THRESH = 0.36;
     const MODEL_THRESH = 0.6;
-    const EYE_LIMIT = 1500; // waktu berapa lama mata tertutup. 1500ms = 1.5 detik
+    const MODEL_STREAK_NEEDED = 3;
 
     const HEAD_TURN_MIN = 0.85;
     const HEAD_TURN_MAX = 1.20;
     const LOW_EAR_STREAK_NEEDED = 3;
 
-    // ── State ─────────────────────────────────────────────────────────
     let earValue = 0;
     let confidence = 0;
     let eyeClosedStart = null;
-    let smoothEAR = 0.44; // ★ mulai dari nilai tengah yang wajar
-    const ALPHA = 0.3;    // ★ smoothing factor
+    let smoothEAR = 0.44;
+    const ALPHA = 0.3;
     let faceDetected = false;
     let isFrontal = true;
     let headTurnRatio = 1;
     let lowEARStreak = 0;
+    let modelHighStreak = 0;
+    let yawnActive = false;
+
     let lastBeep = 0;
     let frameCount = 0;
     let model, scaler;
@@ -1007,6 +1011,8 @@
     let cameraActive = false;
     let cameraInstance = null;
 
+    // HR state (diisi dari fetchIoT)
+    let hrLow = false;
     let hrChart = null;
     let currentRange = 30;
 
@@ -1031,6 +1037,27 @@
       const distLeft = dist(nose, leftCheek);
       const distRight = dist(nose, rightCheek);
       return distRight === 0 ? 1 : distLeft / distRight;
+    }
+
+    function computeDrowsinessLevel() {
+      const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
+      const earLevel = eyeClosedDuration >= EAR_LEVEL2_MS ? 2
+        : (eyeClosedDuration >= EAR_LEVEL1_MS ? 1 : 0);
+
+      const hrLevelValue = hrLow ? 2 : 0;
+      const modelLevel = yawnActive ? 1 : 0;
+
+      // Level 3: EAR sudah confirm + salah satu sinyal lain aktif
+      if (earLevel === 2 && (modelLevel === 1 || hrLevelValue >= 1)) return 3;
+
+      // Level 2: EAR sendiri sudah confirm, atau dua sinyal lemah gabung
+      if (earLevel === 2) return 2;
+      if (earLevel === 1 && (modelLevel === 1 || hrLevelValue >= 1)) return 2;
+
+      // Level 1: salah satu sinyal gejala aktif sendirian
+      if (earLevel === 1 || modelLevel === 1 || hrLevelValue >= 1) return 1;
+
+      return 0;
     }
 
     // ── MediaPipe ────────────────────────────────────────────────────
@@ -1067,7 +1094,7 @@
 
       const leftEAR = calcEAR(lm, LEFT_EYE);
       const rightEAR = calcEAR(lm, RIGHT_EYE);
-      const rawEAR = Math.max(leftEAR, rightEAR); // tahan terhadap distorsi saat menoleh
+      const rawEAR = Math.max(leftEAR, rightEAR);
 
       smoothEAR = ALPHA * rawEAR + (1 - ALPHA) * smoothEAR;
       earValue = smoothEAR;
@@ -1104,7 +1131,6 @@
 
         const hr = parseFloat(data.hr || 0);
         const spo2 = parseFloat(data.spo2 || 0);
-        const hrLow = data.hr_low === true;
         const baselineReady = data.baseline_ready === true;
         const baseline = data.baseline;
 
@@ -1153,11 +1179,8 @@
           countdownEl.style.display = 'none';
         }
 
-        // Logika serial
-        // Kamera aktif sekali, tidak pernah dimatikan otomatis oleh HR
-        if (hrLow && !cameraActive) {
-          await activateCamera();
-        }
+        // Update state HR global — dipakai computeDrowsinessLevel()
+        hrLow = data.hr_low === true;
 
       } catch (e) { }
     }
@@ -1165,7 +1188,7 @@
     // ── Reset baseline ────────────────────────────────────────────────
     async function resetBaseline() {
       await fetch(`${LARAVEL_URL}/api/baseline/reset`, { method: 'POST' }).catch(() => { });
-      deactivateCamera();
+      resetDrowsinessState();
       document.getElementById('baselineStatusText').textContent = 'MENGUMPULKAN...';
       document.getElementById('baselineStatusText').style.color = 'var(--warn)';
       document.getElementById('baselineVal').textContent = '--';
@@ -1349,50 +1372,32 @@
       }
     }
 
-    // ── Matikan kamera ────────────────────────────────────────────────
-    function deactivateCamera() {
-      cameraActive = false;
+    function resetDrowsinessState() {
       earValue = 0;
       confidence = 0;
       eyeClosedStart = null;
       lowEARStreak = 0;
-      faceDetected = false;
-
-      const video = document.getElementById('video');
-      if (video.srcObject) {
-        video.srcObject.getTracks().forEach(t => t.stop());
-        video.srcObject = null;
-      }
-      if (cameraInstance) { cameraInstance.stop?.(); cameraInstance = null; }
-
-      document.getElementById('camStatus').querySelector('span').textContent = 'MENUNGGU SENSOR HR...';
-      document.getElementById('camStatus').className = 'status-card init';
-      document.getElementById('earVal').textContent = '—';
-      document.getElementById('modelVal').textContent = '—';
-      const confBarEl = document.getElementById('confBar');
-      const earBarEl = document.getElementById('earBar');
-      const confPctEl = document.getElementById('confPct');
-      const earPctEl = document.getElementById('earPct');
-      if (confBarEl) confBarEl.style.width = '0%';
-      if (earBarEl) earBarEl.style.width = '0%';
-      if (confPctEl) confPctEl.textContent = '0%';
-      if (earPctEl) earPctEl.textContent = '0%';
+      modelHighStreak = 0;
+      yawnActive = false;
+      smoothEAR = 0.44; // balik ke nilai awal yang wajar, biar smoothing tidak "ingat" nilai lama
     }
 
     // ── Update UI ─────────────────────────────────────────────────────
     function updateUI() {
       if (!cameraActive) return;
 
+      const level = computeDrowsinessLevel();
       const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
-      const eyeDrowsy = eyeClosedDuration >= EYE_LIMIT;
-      const modelDrowsy = confidence >= MODEL_THRESH && isFrontal;
+      const eyeDrowsy = eyeClosedDuration >= EAR_LEVEL2_MS; // dipakai untuk styling EAR card
 
       let status, statusClass;
       if (!faceDetected) {
         status = 'TIDAK ADA WAJAH'; statusClass = 'init';
-      } else if (eyeDrowsy && modelDrowsy) {
-        status = '⚠ MENGANTUK!'; statusClass = 'drowsy';
-      } else if (eyeDrowsy || modelDrowsy) {
+      } else if (level === 3) {
+        status = '⚠ MICROSLEEP ALERT'; statusClass = 'drowsy';
+      } else if (level === 2) {
+        status = '⚠ MENGANTUK'; statusClass = 'drowsy';
+      } else if (level === 1) {
         status = '△ WASPADA'; statusClass = 'warning';
       } else {
         status = '● SIAGA'; statusClass = 'alert';
@@ -1400,10 +1405,10 @@
 
       document.getElementById('camStatus').querySelector('span').textContent = status;
       document.getElementById('camStatus').className = `status-card ${statusClass}`;
-      document.getElementById('alertOverlay').classList.toggle('active', eyeDrowsy && modelDrowsy);
+      document.getElementById('alertOverlay').classList.toggle('active', level >= 2);
 
       const now = Date.now();
-      if ((eyeDrowsy || modelDrowsy) && now - lastBeep > 1000) { playBeep(); lastBeep = now; }
+      if (level >= 2 && now - lastBeep > 1000) { playBeep(); lastBeep = now; }
 
       const earPct = Math.max(0, Math.min(100,
         (earValue - EAR_CLOSED) / (EAR_OPEN - EAR_CLOSED) * 100
@@ -1420,8 +1425,8 @@
 
       const confPct = (confidence * 100).toFixed(1);
       document.getElementById('modelVal').textContent = confPct + '%';
-      document.getElementById('modelVal').className = 'metric-value' + (modelDrowsy ? ' danger' : '');
-      document.getElementById('modelCard').classList.toggle('warn-active', modelDrowsy);
+      document.getElementById('modelVal').className = 'metric-value' + (yawnActive ? ' danger' : '');
+      document.getElementById('modelCard').classList.toggle('warn-active', yawnActive);
 
       // ★ Cek null karena confidence bars di-comment di HTML
       const confBarEl = document.getElementById('confBar');
@@ -1465,6 +1470,14 @@
         const output = model.predict(input);
         confidence = output.dataSync()[0];
         input.dispose(); output.dispose();
+
+        if (confidence >= MODEL_THRESH) {
+          modelHighStreak++;
+          yawnActive = modelHighStreak >= MODEL_STREAK_NEEDED;
+        } else {
+          modelHighStreak = 0;
+          yawnActive = false;
+        }
       } catch (e) {
         console.error('PREDICT ERROR:', e);
       } finally {
@@ -1477,15 +1490,16 @@
       try {
         document.querySelector('.loading-text').textContent = 'MEMUAT AI...';
         await loadAI();
-        document.getElementById('loadingScreen').classList.add('hidden');
-        document.getElementById('camStatus').querySelector('span').textContent = 'MENUNGGU SENSOR HR...';
-        document.getElementById('camStatus').className = 'status-card init';
 
-        // ★ Inisialisasi chart langsung saat halaman dibuka
         initChart();
         loadChartData(currentRange);
+
+        // Kamera langsung aktif, tidak menunggu HR
+        await activateCamera();
+
+        document.getElementById('loadingScreen').classList.add('hidden');
       } catch (e) {
-        document.querySelector('.loading-text').textContent = 'GAGAL LOAD AI';
+        document.querySelector('.loading-text').textContent = 'GAGAL LOAD AI / KAMERA';
       }
     })();
 

@@ -95,35 +95,27 @@ class IotController extends Controller
             }
         } else {
             $drop = ($baseline - $hr) / $baseline * 100;
-            $cameraWasActive = Cache::get('camera_active', false);
 
-            if ($hr > 50) {
-                if (!$cameraWasActive) {
-                    // 3 polling berturut-turut drop ≥9.3% baru aktifkan kamera
-                    $dropConfirmCount = Cache::get('hr_drop_confirm', 0);
+            // Sekali status "mengantuk" terkunci, jangan diubah lagi kecuali baseline direset
+            $dropLatched = Cache::get('hr_drop_latched', false);
 
-                    if ($drop >= 9.3) {
-                        $dropConfirmCount++;
-                        Cache::put('hr_drop_confirm', $dropConfirmCount, 30);
-                    } else {
-                        // HR tidak drop → reset counter konfirmasi
-                        Cache::put('hr_drop_confirm', 0, 30);
-                    }
+            if (!$dropLatched && $hr > 50) {
+                $dropConfirmCount = Cache::get('hr_drop_confirm', 0);
 
-                    $hrLow = $dropConfirmCount >= 3; //hr drop selama 3x polling
-
-                    if ($hrLow) {
-                        // Kamera aktif → tidak perlu reset, biarkan tetap aktif
-                        Cache::put('camera_active', true, 3600);
-                    }
+                if ($drop >= 9.3) {
+                    $dropConfirmCount++;
                 } else {
-                    // Kamera sudah aktif, tidak mati
-                    $hrLow = true;
-                    Cache::put('camera_active', true, 3600);
+                    $dropConfirmCount = 0;
+                }
+                Cache::put('hr_drop_confirm', $dropConfirmCount, 30);
+
+                if ($dropConfirmCount >= 3) {
+                    Cache::put('hr_drop_latched', true, 3600); // kunci, tidak akan direset otomatis
                 }
             }
-        }
 
+            $hrLow = Cache::get('hr_drop_latched', false);
+        }
         $elapsedSeconds = Cache::get('baseline_elapsed_seconds', 0);
         $remainingSeconds = $baseline ? 0 : max(0, self::BASELINE_DURATION_SECONDS - $elapsedSeconds);
 
@@ -167,6 +159,7 @@ class IotController extends Controller
         Cache::forget('baseline_elapsed_seconds');
         Cache::forget('baseline_last_tick_at');
         Cache::forget('hr_drop_confirm');
+        Cache::forget('hr_drop_latched');
         Cache::forget('camera_active');
         return response()->json(['status' => 'ok']);
     }
