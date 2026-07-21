@@ -595,6 +595,47 @@
         gap: 10px;
       }
 
+      .right-panel.paused {
+        opacity: 0.35;
+        pointer-events: none;
+        filter: grayscale(0.9);
+        transition: all 0.4s ease;
+      }
+
+      /* Semua nilai metrik menjadi abu-abu dan tidak terang */
+      .right-panel.paused .metric-value,
+      .right-panel.paused .conf-value,
+      .right-panel.paused #perclosPct,
+      .right-panel.paused #earPct {
+        color: var(--text2) !important;
+      }
+
+      /* Semua bar progress menjadi abu-abu dan lebarnya 0 */
+      .right-panel.paused .bar-fill,
+      .right-panel.paused .ear-bar-fill {
+        background: var(--text2) !important;
+        width: 0% !important;
+      }
+
+      /* Background section ikut redup */
+      .right-panel.paused .confidence-section,
+      .right-panel.paused .metric-card {
+        background: var(--surface2) !important;
+        border-color: var(--border) !important;
+      }
+
+      /* Sembunyikan indikator card (garis atas) */
+      .right-panel.paused .metric-card::before {
+        opacity: 0 !important;
+      }
+
+      /* Jika ada tombol atau elemen interaktif lain, non-aktifkan */
+      .right-panel.paused button,
+      .right-panel.paused #btnLog {
+        opacity: 0.3;
+        pointer-events: none;
+      }
+
       .metrics {
         margin: 0;
       }
@@ -693,6 +734,22 @@
           <div class="bar-track">
             <div class="ear-bar-fill" id="earBar"></div>
           </div>
+
+          <!-- 🆕 PERCLOS live gauge -- supaya user lihat window sedang
+               "terisi" sebelum confidence model naik, bukan cuma nunggu -->
+          <div class="conf-header" style="margin-top:10px">
+            <span class="conf-label">PERCLOS (1 detik terakhir)</span>
+            <span class="conf-value" id="perclosPct" style="color:var(--warn)">0%</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" id="perclosBar" style="background:var(--warn)"></div>
+          </div>
+
+          <!-- 🆕 Closure timer -- informatif, TIDAK mempengaruhi alert -->
+          <div id="closureTimer" style="
+            margin-top:8px; font-family:var(--font-mono); font-size:10px;
+            color:var(--text2); text-align:center; min-height:14px;
+          "></div>
         </div>
 
         <!-- EAR Log -->
@@ -737,201 +794,483 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
 
   <script>
-    const EAR_OPEN = 0.44, EAR_CLOSED = 0.31, EAR_THRESH = 0.36;
-    const EAR_LEVEL1_MS = 800;
-    const EAR_LEVEL2_MS = 1500;
-    const MODEL_THRESH = 0.6;
-    const MODEL_STREAK_NEEDED = 3;
+    // ══════════════════════════════════════════════════════════════
+    // KONSTANTA
+    // ══════════════════════════════════════════════════════════════
+    const DEBUG = false;
+    const WINDOW_SIZES = [5, 10, 15];
+    const MAX_WINDOW = 15;
+    const EAR_CLOSE_THRESH_GENERIC = 0.21;
+    const EAR_CLOSE_THRESH_V5 = 0.15;
+    const MAR_OPEN_THRESH = 0.5;
 
-    const HEAD_TURN_MIN = 0.85;
-    const HEAD_TURN_MAX = 1.20;
-    const LOW_EAR_STREAK_NEEDED = 3;
+    const MODEL_THRESH = 0.3;
+    const MODEL_STREAK_NEEDED = 1;
+    const DROWSY_HOLD_MS = 800;
+    const HEAD_TURN_MIN = 0.85, HEAD_TURN_MAX = 1.20;
+    const HEAD_TURN_SMOOTH_WINDOW = 5;
 
-    let earValue = 0, confidence = 0, eyeClosedStart = null;
-    let smoothEAR = 0.44;
-    const ALPHA = 0.3;
-    let faceDetected = false, lastBeep = 0, frameCount = 0;
+    // 🔧 KONSTANTA KALIBRASI
+    const CALIBRATION_FRAMES = 10;        // ~1.5 detik (30fps)
+    // Threshold closure relatif -- HARUS SAMA PERSIS dengan angka yang
+    // dicetak perclosdiag_rldd_v2_relative.py saat training ("Threshold
+    // closure relatif otomatis (percentile-20): X.XXXX"). Update angka
+    // ini kalau kamu retrain dengan threshold yang beda.
+    const REL_CLOSE_THRESH = 0.8154;
+
+    const EYE_REGION = [7, 33, 133, 144, 145, 153, 154, 155, 157, 158, 159, 160, 161, 163, 173,
+      246, 249, 263, 362, 373, 374, 380, 381, 382, 384, 385, 386, 387, 388, 390, 398, 466];
+    const MOUTH_REGION = [0, 12, 13, 14, 15, 17, 39, 61, 78, 82, 87, 88, 95, 181, 191,
+      269, 291, 308, 312, 317, 318, 324, 405, 415];
+    const LANDMARK_ORDER = [...EYE_REGION, ...MOUTH_REGION];
+
+    const LEFT_EYE_EAR = [362, 385, 387, 263, 373, 380];
+    const RIGHT_EYE_EAR = [33, 160, 158, 133, 153, 144];
+    const NOSE_TIP = 1, LEFT_EYE_OUT = 33, RIGHT_EYE_OUT = 263;
+    const MOUTH_TOP = 13, MOUTH_BOTTOM = 14, MOUTH_LEFT = 78, MOUTH_RIGHT = 308,
+      MOUTH_TOP_OUTER = 12, MOUTH_BOT_OUTER = 15;
+
+    // ══════════════════════════════════════════════════════════════
+    // STATE 
+    // ══════════════════════════════════════════════════════════════
     let model, scaler, isPredicting = false;
-    let isFrontal = true;
-    let headTurnRatio = 1;
-    let lowEARStreak = 0;
-    let modelHighStreak = 0;
-    let yawnActive = false;
-    let hrLow = false; // tidak dipakai di camonly (tidak ada sensor HR), tapi computeDrowsinessLevel butuh variabel ini
+    let faceDetected = false, lastBeep = 0, frameCount = 0;
+    let confidence = 0;
+    let isFrontal = true, headTurnRatio = 1;
+    let headTurnHistory = [];
+    let modelHighStreak = 0, modelDrowsy = false;
+    let drowsyOnUntil = 0;
+    let consecutiveClosedFrames = 0;
+    let drowsyActive = false;
+    let lastPerclosW15 = 0;  // untuk gauge PERCLOS di UI (informatif)
 
-    //log
-    let earLog = [];
-    const EAR_LOG_MAX = 50; // simpan 50 entri terakhir
-    let isLogging = true;
+    let isCalibrating = true;
+    let calibrationEars = [];
+    let baselineEAR = 1.0;   // rata-rata EAR mentah saat kalibrasi (mata terbuka normal)
+    let calibrationDone = false;
 
-    function addEarLog(ear, closed, headRatio) {
+    let calibrationHTRs = [];
+    let baselineHTR = 1.0;      // rata-rata headTurnRatio saat kalibrasi (posisi frontal personal)
+    const HTR_TOLERANCE = 0.25; // toleransi deviasi dari baseline personal sebelum dianggap "tidak frontal"
+
+    const frameBuffer = {
+      ear_avg: [], mar: [], eye_closed_v5: [], mouth_open: [],
+      ear_relative: [], eye_closed_relative: [],   // BARU: sesuai definisi training
+    };
+    let earLog = [], isLogging = true;
+    const EAR_LOG_MAX = 50;
+
+    // ══════════════════════════════════════════════════════════════
+    // UTIL (sama seperti sebelumnya)
+    // ══════════════════════════════════════════════════════════════
+    function dist(a, b) { return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2); }
+    function pushBuffer(k, v) { frameBuffer[k].push(v); if (frameBuffer[k].length > MAX_WINDOW) frameBuffer[k].shift(); }
+    function rollingMean(a, w) { const s = a.slice(-w); return s.reduce((x, y) => x + y, 0) / s.length; }
+    function rollingMin(a, w) { return Math.min(...a.slice(-w)); }
+    function rollingMax(a, w) { return Math.max(...a.slice(-w)); }
+    function rollingStd(a, w) {
+      const s = a.slice(-w); if (s.length < 2) return 0; const m = rollingMean(s, s.length);
+      return Math.sqrt(s.reduce((x, y) => x + (y - m) ** 2, 0) / (s.length - 1));
+    }
+
+    function calcHeadTurnRatio(lm) {
+      const nose = lm[1], lc = lm[234], rc = lm[454];
+      const dl = dist(nose, lc), dr = dist(nose, rc); return dr === 0 ? 1 : dl / dr;
+    }
+    function calcEAR6(lm, idx) {
+      const A = dist(lm[idx[1]], lm[idx[5]]), B = dist(lm[idx[2]], lm[idx[4]]), C = dist(lm[idx[0]], lm[idx[3]]);
+      return C === 0 ? 0 : (A + B) / (2 * C);
+    }
+    function calcMAR(lm) {
+      const v1 = dist(lm[MOUTH_TOP], lm[MOUTH_BOTTOM]), v2 = dist(lm[MOUTH_TOP_OUTER], lm[MOUTH_BOT_OUTER]),
+        h = dist(lm[MOUTH_LEFT], lm[MOUTH_RIGHT]); return h === 0 ? 0 : (v1 + v2) / (2 * h);
+    }
+    function normalizeLandmarks(lm) {
+      const nose = lm[NOSE_TIP]; const scale = Math.max(dist(lm[LEFT_EYE_OUT], lm[RIGHT_EYE_OUT]), 1e-6);
+      const out = {};
+      for (const i of LANDMARK_ORDER) { out[`lx${i}`] = (lm[i].x - nose.x) / scale; out[`ly${i}`] = (lm[i].y - nose.y) / scale; }
+      return out;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // LOG (sama)
+    // ══════════════════════════════════════════════════════════════
+    // Shared -- dipakai di updateUI() DAN addEarLog(), supaya konsisten
+    // dan tidak duplikasi angka 0.15/0.45 di 2 tempat berbeda.
+    function computeEyeOpennessPct(earVal) {
+      return Math.max(0, Math.min(100, (earVal - 0.15) / (0.45 - 0.15) * 100));
+    }
+
+    function addEarLog(earAvg, closed, headRatio, perclosPct, frontal) {
       if (!isLogging) return;
-
       const time = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      earLog.unshift({ time, ear, closed, headRatio: headRatio.toFixed(3) });
+      earLog.unshift({
+        time, ear: earAvg.toFixed(4), closed, headRatio: headRatio.toFixed(3),
+        perclos: perclosPct.toFixed(0), frontal,
+      });
       if (earLog.length > EAR_LOG_MAX) earLog.pop();
-
-      const el = document.getElementById('earLog');
-      el.innerHTML = earLog.map(e => {
+      document.getElementById('earLog').innerHTML = earLog.map(e => {
         const color = e.closed ? 'var(--accent2)' : 'var(--accent)';
         const label = e.closed ? ' ◀ TERTUTUP' : '';
-        return `<div style="color:${color}">${e.time} &nbsp; EAR: <b>${e.ear}</b> &nbsp; HTR: <b>${e.headRatio}</b>${label}</div>`;
+        const frontalLabel = e.frontal ? '' : ' ⚠NOT-FRONTAL';
+        return `<div style="color:${color}">${e.time} &nbsp; EAR: <b>${e.ear}</b> &nbsp; `
+          + `PERCLOS: <b>${e.perclos}%</b> &nbsp; HTR: <b>${e.headRatio}</b>${label}${frontalLabel}</div>`;
       }).join('');
     }
 
     function toggleLog() {
-      isLogging = !isLogging;
-      const btn = document.getElementById('btnLog');
-      if (isLogging) {
-        btn.textContent = '■ STOP';
-        btn.style.background = 'rgba(0,255,136,0.1)';
-        btn.style.borderColor = 'rgba(0,255,136,0.3)';
-        btn.style.color = 'var(--accent)';
+      isLogging = !isLogging; const btn = document.getElementById('btnLog');
+      if (isLogging) { btn.textContent = '■ STOP'; btn.style.background = 'rgba(0,255,136,0.1)'; btn.style.borderColor = 'rgba(0,255,136,0.3)'; btn.style.color = 'var(--accent)'; }
+      else { btn.textContent = '▶ START'; btn.style.background = 'rgba(255,170,0,0.1)'; btn.style.borderColor = 'rgba(255,170,0,0.3)'; btn.style.color = 'var(--warn)'; }
+    }
+
+    function clearLog() { earLog = []; document.getElementById('earLog').innerHTML = '<span style="color:var(--text2); opacity:0.5">— log dikosongkan —</span>'; }
+
+    // ══════════════════════════════════════════════════════════════
+    // PROSES FRAME (tanpa kalibrasi, langsung aktif)
+    // ══════════════════════════════════════════════════════════════
+    function processFrameForModel(lm, htrSmoothed) {
+      const earL = calcEAR6(lm, LEFT_EYE_EAR), earR = calcEAR6(lm, RIGHT_EYE_EAR);
+      let earAvgRaw = (earL + earR) / 2.0;
+      const earDiff = Math.abs(earL - earR);
+      const mar = calcMAR(lm);
+
+      if (DEBUG) console.log(`📊 Frame: ${frameCount}, Calibrating: ${isCalibrating}, CalibrationEars: ${calibrationEars.length}`);
+
+      // 🔧 KALIBRASI: kumpulkan EAR sampai cukup
+      if (isCalibrating) {
+        calibrationEars.push(earAvgRaw);
+        calibrationHTRs.push(htrSmoothed);
+        console.log(`📊 EAR collected: ${earAvgRaw.toFixed(4)} (${calibrationEars.length}/${CALIBRATION_FRAMES})`);
+
+        // Update UI status kalibrasi
+        const progress = Math.min(100, Math.round(calibrationEars.length / CALIBRATION_FRAMES * 100));
+        document.getElementById('camStatus').querySelector('span').textContent = `🔧 KALIBRASI ${progress}%`;
+        document.getElementById('camStatus').className = 'status-card warning';
+
+        if (calibrationEars.length >= CALIBRATION_FRAMES) {
+          baselineEAR = calibrationEars.reduce((a, b) => a + b, 0) / calibrationEars.length;
+          baselineHTR = calibrationHTRs.reduce((a, b) => a + b, 0) / calibrationHTRs.length;
+          isCalibrating = false;
+          calibrationDone = true;
+
+          console.log('✅ Kalibrasi selesai!');
+          console.log(`   Baseline EAR (mata terbuka normal): ${baselineEAR.toFixed(4)}`);
+          console.log(`   Baseline HTR (posisi kepala frontal personal): ${baselineHTR.toFixed(4)}`);
+
+          document.getElementById('camStatus').querySelector('span').textContent = '● SIAGA';
+          document.getElementById('camStatus').className = 'status-card alert';
+        }
+
+        return { earAvg: earAvgRaw, closedForLog: false, featureDict: null };
+      }
+
+      // ear_avg TETAP MENTAH (persis definisi training -- training TIDAK
+      // pernah menskalakan ear_avg secara manual, cuma ear_relative yang
+      // dinormalisasi). JANGAN kalikan scale factor apapun di sini.
+      const earAvg = earAvgRaw;
+
+      // ear_relative = rasio ke baseline personal -- INI yang persis
+      // sama definisinya dengan training (baseline_ear per subject,
+      // percentile-90 dari frame alert). Di sini baseline = rata-rata
+      // kalibrasi 10 frame pertama (asumsi user dalam kondisi alert
+      // saat kalibrasi -- sama seperti asumsi di training).
+      const earRelative = earAvgRaw / baselineEAR;
+      const eyeClosedRelative = earRelative < REL_CLOSE_THRESH ? 1 : 0;
+
+      // 🛡️ Jaring pengaman rule-based -- dihitung tiap frame (bukan
+      // cuma tiap 5 frame seperti model), jadi responsnya lebih cepat.
+      if (earRelative < REL_CLOSE_THRESH) {
+        consecutiveClosedFrames++;
       } else {
-        btn.textContent = '▶ START';
-        btn.style.background = 'rgba(255,170,0,0.1)';
-        btn.style.borderColor = 'rgba(255,170,0,0.3)';
-        btn.style.color = 'var(--warn)';
+        consecutiveClosedFrames = 0;
+      }
+
+      const eyeClosedV5 = earAvg < EAR_CLOSE_THRESH_V5 ? 1 : 0;  // dipakai utk log UI saja
+      const mouthOpen = mar > MAR_OPEN_THRESH ? 1 : 0;
+
+      pushBuffer('ear_avg', earAvg);
+      pushBuffer('mar', mar);
+      pushBuffer('eye_closed_v5', eyeClosedV5);
+      pushBuffer('mouth_open', mouthOpen);
+      pushBuffer('ear_relative', earRelative);
+      pushBuffer('eye_closed_relative', eyeClosedRelative);
+
+      const earMarRatio = earAvg / (mar + 1e-6);
+
+      const featureDict = {
+        ...normalizeLandmarks(lm),
+        ear_avg: earAvg,
+        ear_left: earL,
+        ear_right: earR,
+        ear_diff: earDiff,
+        ear_mar_ratio: earMarRatio,
+        eye_closed: earAvg < EAR_CLOSE_THRESH_GENERIC ? 1 : 0,
+        mar: mar,
+        mouth_open: mouthOpen,
+        // BARU: fitur yang tadinya hilang total (selalu ke-default 0)
+        ear_relative: earRelative,
+        eye_closed_v3: eyeClosedRelative,
+      };
+
+      for (const w of WINDOW_SIZES) {
+        // perclos_w* & ear_rel_* HARUS dihitung dari ear_relative /
+        // eye_closed_relative (sesuai training), BUKAN dari ear_avg
+        // mentah / eye_closed_v5 seperti versi lama.
+        const earRelWindow = frameBuffer.ear_relative.slice(-w);
+        const eyeClosedRelWindow = frameBuffer.eye_closed_relative.slice(-w);
+        const marWindow = frameBuffer.mar.slice(-w);
+        const mouthOpenWindow = frameBuffer.mouth_open.slice(-w);
+
+        const earRelLen = earRelWindow.length;
+        const earRelMean = earRelLen > 0 ? earRelWindow.reduce((a, b) => a + b, 0) / earRelLen : 0;
+        const earRelMin = earRelLen > 0 ? Math.min(...earRelWindow) : 0;
+        const earRelStd = earRelLen > 1 ? (() => {
+          const m = earRelMean;
+          return Math.sqrt(earRelWindow.reduce((a, b) => a + (b - m) ** 2, 0) / (earRelLen - 1));
+        })() : 0;
+
+        const marMean = marWindow.length > 0 ? marWindow.reduce((a, b) => a + b, 0) / marWindow.length : 0;
+        const marMax = marWindow.length > 0 ? Math.max(...marWindow) : 0;
+        const mouthOpenRate = mouthOpenWindow.length > 0 ? mouthOpenWindow.reduce((a, b) => a + b, 0) / mouthOpenWindow.length : 0;
+        const perclos = eyeClosedRelWindow.length > 0
+          ? eyeClosedRelWindow.reduce((a, b) => a + b, 0) / eyeClosedRelWindow.length : 0;
+
+        featureDict[`ear_rel_mean_w${w}`] = earRelMean;
+        featureDict[`ear_rel_min_w${w}`] = earRelMin;
+        featureDict[`ear_rel_std_w${w}`] = earRelStd;
+        featureDict[`mar_mean_w${w}`] = marMean;
+        featureDict[`mar_max_w${w}`] = marMax;
+        featureDict[`mouth_open_rate_w${w}`] = mouthOpenRate;
+        featureDict[`perclos_w${w}`] = perclos;
+
+        if (w === 15) lastPerclosW15 = perclos;  // untuk gauge UI
+      }
+
+      return { earAvg, closedForLog: eyeClosedRelative === 1, featureDict };
+    }
+
+    async function loadAI() {
+      model = await tflite.loadTFLiteModel('/model/7smlp_reflandmarkoff.tflite');
+      scaler = await fetch('/model/7scaler_reflandmarkoff.json').then(r => r.json());
+      console.log('MLP model loaded!');
+    }
+
+    let missingFeatureWarned = false;
+    function buildScaledVector(featureDict) {
+      const missing = scaler.feature_columns.filter(col => !(col in featureDict));
+      if (missing.length > 0 && !missingFeatureWarned) {
+        console.error(
+          `⚠️ ${missing.length} feature_columns dari scaler TIDAK ADA di featureDict ` +
+          `(akan ke-default 0, kemungkinan besar bikin prediksi ngaco): `, missing
+        );
+        missingFeatureWarned = true;  // cukup 1x supaya console tidak spam
+      }
+      const raw = scaler.feature_columns.map(col => featureDict[col] ?? 0);
+      return raw.map((v, i) => v * scaler.scale[i] + scaler.min[i]);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // GANTI: predictLocal untuk MLP (TFLite)
+    // ══════════════════════════════════════════════════════════════
+    async function predictLocal(featureDict) {
+      if (isPredicting) return;
+      isPredicting = true;
+      try {
+        const scaledVec = buildScaledVector(featureDict);
+
+        if (DEBUG) {
+          console.log('Feature values:', {
+            ear_avg: featureDict.ear_avg,
+            ear_rel_mean_w15: featureDict.ear_rel_mean_w15,
+            perclos_w15: featureDict.perclos_w15,
+            mar: featureDict.mar,
+          });
+        }
+
+        if (DEBUG && frameCount % 30 === 0) {
+          console.log('=== Rolling Window Values ===');
+          console.log('ear_avg buffer length:', frameBuffer.ear_avg.length);
+          console.log('ear_avg buffer:', frameBuffer.ear_avg);
+          console.log('ear_rel_mean_w15:', featureDict.ear_rel_mean_w15);
+          console.log('perclos_w15:', featureDict.perclos_w15);
+        }
+
+        // MLP output shape [1, 1] → probability
+        const input = tf.tensor([scaledVec], [1, scaledVec.length]);
+        const output = model.predict(input);
+        confidence = output.dataSync()[0];  // MLP output langsung probability
+
+        input.dispose();
+        output.dispose();
+        if (confidence >= MODEL_THRESH) {
+          modelHighStreak++;
+          if (modelHighStreak >= MODEL_STREAK_NEEDED) {
+            modelDrowsy = true;
+            drowsyOnUntil = Date.now() + DROWSY_HOLD_MS;   // perpanjang hold tiap kali confidence tinggi
+          }
+        } else {
+          modelHighStreak = 0;
+          modelDrowsy = Date.now() < drowsyOnUntil;   // tetap ON kalau masih dalam masa hold
+        }
+      } catch (e) {
+        console.error('PREDICT ERROR:', e);
+      } finally {
+        isPredicting = false;
       }
     }
 
-    function clearLog() {
-      earLog = [];
-      document.getElementById('earLog').innerHTML = '<span style="color:var(--text2); opacity:0.5">— log dikosongkan —</span>';
-    }
-
-    const LEFT_EYE = [362, 385, 387, 263, 373, 380];
-    const RIGHT_EYE = [33, 160, 158, 133, 153, 144];
-
-    function dist(a, b) { return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2); }
-
-    function calcHeadTurnRatio(lm) {
-      const nose = lm[1];
-      const leftCheek = lm[234];
-      const rightCheek = lm[454];
-      const distLeft = dist(nose, leftCheek);
-      const distRight = dist(nose, rightCheek);
-      return distRight === 0 ? 1 : distLeft / distRight;
-    }
-
-    function calcEAR(lm, idx) {
-      const A = dist(lm[idx[1]], lm[idx[5]]);
-      const B = dist(lm[idx[2]], lm[idx[4]]);
-      const C = dist(lm[idx[0]], lm[idx[3]]);
-      return C === 0 ? 0 : (A + B) / (2 * C);
-    }
-
-    function computeDrowsinessLevel() {
-      const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
-      const earLevel = eyeClosedDuration >= EAR_LEVEL2_MS ? 2
-        : (eyeClosedDuration >= EAR_LEVEL1_MS ? 1 : 0);
-
-      const hrLevelValue = hrLow ? 2 : 0; // selalu 0 di camonly, tidak ada sensor HR
-      const modelLevel = yawnActive ? 1 : 0;
-
-      if (earLevel === 2 && (modelLevel === 1 || hrLevelValue >= 1)) return 3;
-      if (earLevel === 2) return 2;
-      if (earLevel === 1 && (modelLevel === 1 || hrLevelValue >= 1)) return 2;
-      if (earLevel === 1 || modelLevel === 1 || hrLevelValue >= 1) return 1;
-      return 0;
-    }
-
+    // ══════════════════════════════════════════════════════════════
+    // MEDIAPIPE
+    // ══════════════════════════════════════════════════════════════
     const faceMesh = new FaceMesh({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
     faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
     faceMesh.onResults(async (results) => {
       frameCount++;
+      if (DEBUG) console.log(`🔄 Frame count: ${frameCount}`);
 
       if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
         faceDetected = false;
-        eyeClosedStart = null;
-        lowEARStreak = 0;
         document.getElementById('noFace').style.display = 'block';
         updateUI();
         return;
       }
-
       faceDetected = true;
       document.getElementById('noFace').style.display = 'none';
-
       const lm = results.multiFaceLandmarks[0];
 
       headTurnRatio = calcHeadTurnRatio(lm);
-      isFrontal = headTurnRatio >= HEAD_TURN_MIN && headTurnRatio <= HEAD_TURN_MAX;
+      headTurnHistory.push(headTurnRatio);
+      if (headTurnHistory.length > HEAD_TURN_SMOOTH_WINDOW) headTurnHistory.shift();
+      const headTurnRatioSmoothed = headTurnHistory.reduce((a, b) => a + b, 0) / headTurnHistory.length;
 
-      const leftEAR = calcEAR(lm, LEFT_EYE);
-      const rightEAR = calcEAR(lm, RIGHT_EYE);
-      const rawEAR = Math.max(leftEAR, rightEAR); // tahan terhadap distorsi saat menoleh
-
-      smoothEAR = ALPHA * rawEAR + (1 - ALPHA) * smoothEAR;
-      earValue = smoothEAR;
-
-      if (earValue < EAR_THRESH && isFrontal) {
-        lowEARStreak++;
-        if (lowEARStreak >= LOW_EAR_STREAK_NEEDED && eyeClosedStart === null) {
-          eyeClosedStart = Date.now();
-        }
-      } else if (!isFrontal) {
-        // kepala menoleh → jeda, jangan reset total
+      // Selama kalibrasi, anggap frontal (belum ada baseline utk dibandingkan)
+      if (isCalibrating) {
+        isFrontal = true;
       } else {
-        lowEARStreak = 0;
-        eyeClosedStart = null;
+        const deviasi = Math.abs(headTurnRatioSmoothed - baselineHTR) / baselineHTR;
+        isFrontal = Math.abs(headTurnRatioSmoothed - baselineHTR) <= HTR_TOLERANCE;
       }
 
-      if (frameCount % 5 === 0) addEarLog(earValue.toFixed(4), earValue < EAR_THRESH, headTurnRatio);
+      const result = processFrameForModel(lm, headTurnRatioSmoothed);
 
-      if (frameCount % 10 === 0 && isFrontal) {
-        const flat = [];
-        for (let i = 0; i < 468; i++) { flat.push(lm[i].x); flat.push(lm[i].y); }
-        predictLocal(flat);
+      // 🔧 Alert MURNI dari model, tidak ada jalur rule-based lain.
+      drowsyActive = modelDrowsy;
+
+      if (frameCount % 15 === 0) {
+        addEarLog(result.earAvg, result.closedForLog, headTurnRatio,
+          lastPerclosW15 * 100, isFrontal);
       }
-      updateUI();
+
+      if (!isFrontal) {
+        // Reset semua state drowsy
+        modelDrowsy = false;
+        drowsyActive = false;
+        confidence = 0;
+        modelHighStreak = 0;
+        drowsyOnUntil = 0;
+        // Jangan panggil predictLocal
+      } else {
+        // Hanya jalankan prediksi jika frontal dan kalibrasi selesai
+        if (result.featureDict && frameCount % 5 === 0 && calibrationDone) {
+          await predictLocal(result.featureDict);
+        }
+      }
+
+      // Logging hanya jika frontal
+      if (frameCount % 15 === 0 && isFrontal) {
+        addEarLog(result.earAvg, result.closedForLog, headTurnRatio,
+          lastPerclosW15 * 100, isFrontal);
+      }
+
+      if (frameCount % 3 === 0) updateUI();
     });
 
+    // ══════════════════════════════════════════════════════════════
+    // UI
+    // ══════════════════════════════════════════════════════════════
     function updateUI() {
-      const level = computeDrowsinessLevel();
-      const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
-      const eyeDrowsy = eyeClosedDuration >= EAR_LEVEL2_MS;
-
       let status, statusClass;
+      const rightPanel = document.querySelector('.right-panel');
+
+      // Tentukan status
       if (!faceDetected) {
-        status = 'TIDAK ADA WAJAH'; statusClass = 'init';
-      } else if (level === 3) {
-        status = '⚠ MICROSLEEP ALERT'; statusClass = 'drowsy';
-      } else if (level === 2) {
-        status = '⚠ MENGANTUK'; statusClass = 'drowsy';
-      } else if (level === 1) {
-        status = '△ WASPADA'; statusClass = 'warning';
+        status = 'TIDAK ADA WAJAH';
+        statusClass = 'init';
+        rightPanel.classList.add('paused');
+      } else if (!isFrontal) {
+        status = 'KEPALA TIDAK MENGHADAP KAMERA';
+        statusClass = 'init';
+        rightPanel.classList.add('paused');
       } else {
-        status = '● SIAGA'; statusClass = 'alert';
+        rightPanel.classList.remove('paused');
+        if (drowsyActive) {
+          status = '⚠ MENGANTUK';
+          statusClass = 'drowsy';
+        } else if (confidence >= 0.4) {
+          status = '△ WASPADA';
+          statusClass = 'warning';
+        } else {
+          status = '● SIAGA';
+          statusClass = 'alert';
+        }
       }
 
+      // Update status card
       document.getElementById('camStatus').querySelector('span').textContent = status;
       document.getElementById('camStatus').className = `status-card ${statusClass}`;
-      document.getElementById('alertOverlay').classList.toggle('active', level >= 2);
 
+      // Overlay alert hanya jika frontal dan wajah terdeteksi
+      const isActive = faceDetected && isFrontal;
+      document.getElementById('alertOverlay').classList.toggle('active', isActive && drowsyActive);
+
+      // Beep hanya jika aktif
       const now = Date.now();
-      if (level >= 2 && now - lastBeep > 1000) { playBeep(); lastBeep = now; }
+      if (isActive && drowsyActive && now - lastBeep > 1000) {
+        playBeep();
+        lastBeep = now;
+      }
 
-      const earPct = Math.max(0, Math.min(100, (earValue - EAR_CLOSED) / (EAR_OPEN - EAR_CLOSED) * 100));
-      document.getElementById('earVal').textContent = earValue.toFixed(3);
-      document.getElementById('earVal').className = 'metric-value' + (eyeDrowsy ? ' danger' : ' good');
-      document.getElementById('earPct').textContent = earPct.toFixed(0) + '%';
-      document.getElementById('earBar').style.width = earPct + '%';
-      document.getElementById('earBar').className = 'ear-bar-fill' + (earValue < EAR_THRESH ? ' low' : '');
-      document.getElementById('earCard').classList.toggle('warn-active', eyeDrowsy);
+      // --- UPDATE METRIK (hanya jika aktif) ---
+      const confPct = isActive ? (confidence * 100).toFixed(1) : '0.0';
+      document.getElementById('modelVal').textContent = isActive ? confPct + '%' : '—';
+      document.getElementById('modelVal').className = 'metric-value' + (isActive && drowsyActive ? ' danger' : '');
+      document.getElementById('confPct').textContent = isActive ? confPct + '%' : '0%';
+      document.getElementById('confPct').style.color = isActive && drowsyActive ? 'var(--accent2)' : (isActive ? 'var(--accent)' : 'var(--text2)');
+      document.getElementById('confBar').style.width = isActive ? confPct + '%' : '0%';
+      document.getElementById('confBar').className = 'bar-fill' + (isActive ? (confidence >= MODEL_THRESH ? ' high' : confidence >= 0.4 ? ' medium' : '') : '');
 
-      const confPct = (confidence * 100).toFixed(1);
-      document.getElementById('modelVal').textContent = confPct + '%';
-      document.getElementById('modelVal').className = 'metric-value' + (yawnActive ? ' danger' : '');
-      document.getElementById('confPct').textContent = confPct + '%';
-      document.getElementById('confPct').style.color = yawnActive ? 'var(--accent2)' : 'var(--accent)';
-      document.getElementById('confBar').style.width = confPct + '%';
-      document.getElementById('confBar').className = 'bar-fill' + (confidence >= MODEL_THRESH ? ' high' : confidence >= 0.4 ? ' medium' : '');
-      document.getElementById('modelCard').classList.toggle('warn-active', yawnActive);
+      const lastEar = isActive ? (frameBuffer.ear_avg.at(-1) ?? 0) : 0;
+      document.getElementById('earVal').textContent = isActive && frameBuffer.ear_avg.length ? lastEar.toFixed(3) : '—';
+      const earPctInfo = isActive ? computeEyeOpennessPct(lastEar) : 0;
+      document.getElementById('earPct').textContent = isActive ? earPctInfo.toFixed(0) + '%' : '0%';
+      document.getElementById('earBar').style.width = isActive ? earPctInfo + '%' : '0%';
+
+      const perclosPctVal = isActive ? (lastPerclosW15 * 100).toFixed(0) : '0';
+      document.getElementById('perclosPct').textContent = isActive ? perclosPctVal + '%' : '0%';
+      document.getElementById('perclosBar').style.width = isActive ? perclosPctVal + '%' : '0%';
+
+      // Closure timer
+      const timerEl = document.getElementById('closureTimer');
+      if (isActive && consecutiveClosedFrames > 0 && !drowsyActive) {
+        const approxSeconds = (consecutiveClosedFrames / 15).toFixed(1);
+        timerEl.textContent = `⏱ mata tertutup ~${approxSeconds}s — menganalisis pola...`;
+      } else {
+        timerEl.textContent = '';
+      }
+
+      // EAR Log – pause saat tidak aktif
+      if (!isActive) {
+        document.getElementById('earLog').innerHTML = '<span style="color:var(--text2); opacity:0.5">⏸ PAUSED — wajah tidak frontal / tidak terdeteksi</span>';
+      }
+
+      document.getElementById('modelCard').classList.toggle('warn-active', isActive && drowsyActive);
     }
 
     function playBeep() {
@@ -946,59 +1285,39 @@
       } catch (e) { }
     }
 
-    async function loadAI() {
-      model = await tflite.loadTFLiteModel('/model/drowsiness_model_v2.tflite');
-      scaler = await fetch('/model/scaler_v2.json').then(r => r.json());
-    }
-
-    function normalize(data) { return data.map((v, i) => (v * scaler.scale[i]) + scaler.min[i]); }
-
-    async function predictLocal(flat) {
-      if (isPredicting) return;
-      isPredicting = true;
-      try {
-        const input = tf.tensor([normalize(flat)], [1, 936]);
-        const output = model.predict(input);
-        confidence = output.dataSync()[0];
-        input.dispose(); output.dispose();
-
-        if (confidence >= MODEL_THRESH) {
-          modelHighStreak++;
-          yawnActive = modelHighStreak >= MODEL_STREAK_NEEDED;
-        } else {
-          modelHighStreak = 0;
-          yawnActive = false;
-        }
-      } catch (e) { console.error('PREDICT ERROR:', e); }
-      finally { isPredicting = false; }
-    }
-    // ★ Boot: langsung aktifkan kamera setelah AI load
+    // ══════════════════════════════════════════════════════════════
+    // BOOT (dengan guard meshBusy)
+    // ══════════════════════════════════════════════════════════════
     (async () => {
       try {
         document.querySelector('.loading-text').textContent = 'MEMUAT AI...';
         await loadAI();
         document.getElementById('loadingScreen').classList.add('hidden');
 
-        // Langsung nyalakan kamera tanpa tunggu sensor HR
         const video = document.getElementById('video');
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } },
-          audio: false
+          video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } }, audio: false
         });
         video.srcObject = stream;
         await video.play();
 
+        let meshBusy = false;
         const cam = new Camera(video, {
-          onFrame: async () => { await faceMesh.send({ image: video }); },
+          onFrame: async () => {
+            if (meshBusy) return;
+            meshBusy = true;
+            await faceMesh.send({ image: video });
+            meshBusy = false;
+          },
           width: 320, height: 240
         });
         cam.start();
 
         document.getElementById('camStatus').querySelector('span').textContent = '● SIAGA';
         document.getElementById('camStatus').className = 'status-card alert';
-
       } catch (e) {
         document.querySelector('.loading-text').textContent = 'GAGAL LOAD AI / KAMERA';
+        console.error(e);
       }
     })();
   </script>
