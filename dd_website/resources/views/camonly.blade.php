@@ -184,7 +184,7 @@
     .status-card {
       position: relative;
       flex: 1;
-      margin-top: 10px;
+      /* margin-top: 10px; */
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 20px;
@@ -589,6 +589,17 @@
         gap: 10px;
       }
 
+      .left-panel .status-card,
+      .left-panel #btnStartCalibration {
+        margin: 0;
+      }
+
+      .left-panel #btnStartCalibration {
+        display: block;
+        width: 100%;
+        /* default block akan full width minus margin */
+      }
+
       .right-panel {
         display: flex;
         flex-direction: column;
@@ -700,7 +711,16 @@
             </div>
           </div>
         </div>
+
         <div class="status-card init" id="camStatus"><span>MEMUAT...</span></div>
+
+        <button id="btnStartCalibration" onclick="startCalibration()" style="
+          display:none;
+          background:rgba(0,255,136,0.1); border:1px solid rgba(0,255,136,0.3);
+          color:var(--accent); padding:12px; border-radius:12px;
+          font-family:var(--font-mono); font-size:12px; letter-spacing:1px;
+          cursor:pointer; text-transform:uppercase;
+        ">Mulai Kalibrasi</button>
       </div>
 
       <!-- Right: Metrics only -->
@@ -810,13 +830,13 @@
     const MAR_OPEN_THRESH = 0.5;
 
     const MODEL_THRESH = 0.3;
-    const MODEL_STREAK_NEEDED = 1;
+    const MODEL_STREAK_MS = 900;
     const DROWSY_HOLD_MS = 800;
     const HEAD_TURN_MIN = 0.85, HEAD_TURN_MAX = 1.20;
     const HEAD_TURN_SMOOTH_WINDOW = 5;
 
     // 🔧 KONSTANTA KALIBRASI
-    const CALIBRATION_FRAMES = 10;        // ~1.5 detik (30fps)
+    const CALIBRATION_FRAMES = 30;        // ~1.5 detik (30fps)
     // Threshold closure relatif -- HARUS SAMA PERSIS dengan angka yang
     // dicetak perclosdiag_rldd_v2_relative.py saat training ("Threshold
     // closure relatif otomatis (percentile-20): X.XXXX"). Update angka
@@ -843,13 +863,14 @@
     let confidence = 0;
     let isFrontal = true, headTurnRatio = 1;
     let headTurnHistory = [];
-    let modelHighStreak = 0, modelDrowsy = false;
+    let confidenceHighSince = 0, modelDrowsy = false;
     let drowsyOnUntil = 0;
     let consecutiveClosedFrames = 0;
     let drowsyActive = false;
     let lastPerclosW15 = 0;  // untuk gauge PERCLOS di UI (informatif)
 
-    let isCalibrating = true;
+    let isCalibrating = false;
+    let calibrationStarted = false;
     let calibrationEars = [];
     let baselineEAR = 1.0;   // rata-rata EAR mentah saat kalibrasi (mata terbuka normal)
     let calibrationDone = false;
@@ -882,6 +903,7 @@
       const nose = lm[1], lc = lm[234], rc = lm[454];
       const dl = dist(nose, lc), dr = dist(nose, rc); return dr === 0 ? 1 : dl / dr;
     }
+    
     function calcEAR6(lm, idx) {
       const A = dist(lm[idx[1]], lm[idx[5]]), B = dist(lm[idx[2]], lm[idx[4]]), C = dist(lm[idx[0]], lm[idx[3]]);
       return C === 0 ? 0 : (A + B) / (2 * C);
@@ -927,6 +949,16 @@
       isLogging = !isLogging; const btn = document.getElementById('btnLog');
       if (isLogging) { btn.textContent = '■ STOP'; btn.style.background = 'rgba(0,255,136,0.1)'; btn.style.borderColor = 'rgba(0,255,136,0.3)'; btn.style.color = 'var(--accent)'; }
       else { btn.textContent = '▶ START'; btn.style.background = 'rgba(255,170,0,0.1)'; btn.style.borderColor = 'rgba(255,170,0,0.3)'; btn.style.color = 'var(--warn)'; }
+    }
+
+    function startCalibration() {
+      calibrationEars = [];
+      calibrationHTRs = [];   // aman ada walau kamu belum pakai fitur HTR gate
+      calibrationStarted = true;
+      isCalibrating = true;
+      document.getElementById('btnStartCalibration').style.display = 'none';
+      document.getElementById('camStatus').querySelector('span').textContent = '🔧 KALIBRASI 0%';
+      document.getElementById('camStatus').className = 'status-card warning';
     }
 
     function clearLog() { earLog = []; document.getElementById('earLog').innerHTML = '<span style="color:var(--text2); opacity:0.5">— log dikosongkan —</span>'; }
@@ -1109,14 +1141,14 @@
         input.dispose();
         output.dispose();
         if (confidence >= MODEL_THRESH) {
-          modelHighStreak++;
-          if (modelHighStreak >= MODEL_STREAK_NEEDED) {
+          if (confidenceHighSince === 0) confidenceHighSince = Date.now();
+          if (Date.now() - confidenceHighSince >= MODEL_STREAK_MS) {
             modelDrowsy = true;
-            drowsyOnUntil = Date.now() + DROWSY_HOLD_MS;   // perpanjang hold tiap kali confidence tinggi
+            drowsyOnUntil = Date.now() + DROWSY_HOLD_MS;
           }
         } else {
-          modelHighStreak = 0;
-          modelDrowsy = Date.now() < drowsyOnUntil;   // tetap ON kalau masih dalam masa hold
+          confidenceHighSince = 0;
+          modelDrowsy = Date.now() < drowsyOnUntil;
         }
       } catch (e) {
         console.error('PREDICT ERROR:', e);
@@ -1141,9 +1173,14 @@
         updateUI();
         return;
       }
+
       faceDetected = true;
       document.getElementById('noFace').style.display = 'none';
       const lm = results.multiFaceLandmarks[0];
+
+      if (!calibrationStarted) {
+        return;
+      }
 
       headTurnRatio = calcHeadTurnRatio(lm);
       headTurnHistory.push(headTurnRatio);
@@ -1173,7 +1210,7 @@
         modelDrowsy = false;
         drowsyActive = false;
         confidence = 0;
-        modelHighStreak = 0;
+        confidenceHighSince = 0;
         drowsyOnUntil = 0;
         // Jangan panggil predictLocal
       } else {
@@ -1315,6 +1352,7 @@
 
         document.getElementById('camStatus').querySelector('span').textContent = '● SIAGA';
         document.getElementById('camStatus').className = 'status-card alert';
+        document.getElementById('btnStartCalibration').style.display = 'block';
       } catch (e) {
         document.querySelector('.loading-text').textContent = 'GAGAL LOAD AI / KAMERA';
         console.error(e);

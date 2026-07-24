@@ -137,7 +137,7 @@
     .status-card {
       position: relative;
       flex: 1;
-      margin-top: 10px;
+      /* margin-top: 10px; */
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 20px;
@@ -737,7 +737,7 @@
     /* ── PC layout ── */
     @media (min-width: 768px) {
       .app {
-        max-width: 900px;
+        max-width: 1400px;
         padding-bottom: 40px;
       }
 
@@ -747,7 +747,8 @@
 
       .main-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 0.9fr 1.1fr 0.9fr;
+        /* left, middle(kamera), right */
         gap: 16px;
         padding: 0 24px;
         align-items: start;
@@ -762,12 +763,26 @@
         display: flex;
         flex-direction: column;
         gap: 10px;
+        order: 1;
+      }
+
+      .middle-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        order: 2;
+      }
+
+      .middle-panel #btnStartCalibration {
+        display: block;
+        width: 100%;
       }
 
       .right-panel {
         display: flex;
         flex-direction: column;
         gap: 10px;
+        order: 3;
       }
 
       .metrics {
@@ -808,8 +823,8 @@
     <!-- PC: wrap in grid -->
     <div class="main-grid">
 
-      <!-- Camera -->
-      <div class="left-panel">
+      <!-- Middle panel: kamera -->
+      <div class="middle-panel">
         <div class="camera-wrap" id="cameraWrap">
           <video id="video" autoplay playsinline muted></video>
           <canvas id="canvas"></canvas>
@@ -819,10 +834,7 @@
             <div class="corner bl"></div>
             <div class="corner br"></div>
             <div class="no-face" id="noFace">WAJAH TIDAK TERDETEKSI</div>
-
             <img src="/assets/outline.png" class="face-guide-img" id="faceGuide" alt="">
-
-            <!-- ★ Info jarak -->
             <div class="distance-hint" id="distanceHint">
               <div class="dot"></div>
               <span id="distanceText">Posisikan wajah Anda di dalam outline untuk hasil terbaik</span>
@@ -830,13 +842,11 @@
           </div>
         </div>
 
-        <div class="cam-status init" id="camStatus"><span>MEMUAT...</span></div>
+        <div class="status-card init" id="camStatus"><span>MEMUAT...</span></div>
       </div>
 
-      <!-- Right panel -->
-      <div class="right-panel">
-
-        <!-- Metrics -->
+      <!-- Left panel: metrics + confidence -->
+      <div class="left-panel">
         <div class="metrics">
           <div class="metric-card" id="earCard" style="--card-color: #4488ff">
             <div class="metric-label">EAR Score</div>
@@ -850,8 +860,7 @@
           </div>
         </div>
 
-        <!-- Confidence bars -->
-        {{-- <div class="confidence-section">
+        <div class="confidence-section">
           <div class="conf-header">
             <span class="conf-label">Drowsiness Confidence</span>
             <span class="conf-value" id="confPct">0%</span>
@@ -867,9 +876,32 @@
           <div class="bar-track">
             <div class="ear-bar-fill" id="earBar"></div>
           </div>
-        </div> --}}
 
-        <!-- IoT data -->
+          <div class="conf-header" style="margin-top:10px">
+            <span class="conf-label">PERCLOS (1 detik terakhir)</span>
+            <span class="conf-value" id="perclosPct" style="color:var(--warn)">0%</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" id="perclosBar" style="background:var(--warn)"></div>
+          </div>
+
+          <div id="closureTimer" style="
+            margin-top:8px; font-family:var(--font-mono); font-size:10px;
+            color:var(--text2); text-align:center; min-height:14px;
+          "></div>
+
+          <button id="btnStartCalibration" onclick="startCalibration()" style="
+            display:none;
+            background:rgba(0,255,136,0.1); border:1px solid rgba(0,255,136,0.3);
+            color:var(--accent); padding:12px; border-radius:12px;
+            font-family:var(--font-mono); font-size:12px; letter-spacing:1px;
+            cursor:pointer; text-transform:uppercase;
+            ">Mulai Kalibrasi</button>
+        </div>
+      </div>
+
+      <!-- Right panel: IoT -->
+      <div class="right-panel">
         <div class="iot-section">
           <div class="iot-header">
             <div class="iot-dot"></div>
@@ -889,46 +921,23 @@
             </div>
           </div>
 
-          <!-- Baseline Status - Di sini -->
-          <div style="
-                    margin-top: 14px; 
-                    padding-top: 14px; 
-                    border-top: 1px solid var(--border);
-                  ">
+          <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);">
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <div style="flex:1;">
                 <div class="iot-metric-label" style="font-size:8px; margin-bottom:4px;">CARDIO BASELINE</div>
-                <div id="baselineVal" style="
-                          font-family: var(--font-mono); 
-                          font-size: 20px; 
-                          font-weight: 700; 
-                          color: var(--accent);
-                        ">--</div>
-                <div id="baselineCountdown" style="
-                font-family: var(--font-mono);
-                font-size: 11px;
-                color: var(--text2);
-                margin-top: 4px;
-                display: none;
-              "></div>
+                <div id="baselineVal"
+                  style="font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--accent);">--
+                </div>
+                <div id="baselineCountdown"
+                  style="font-family: var(--font-mono); font-size: 11px; color: var(--text2); margin-top: 4px; display: none;">
+                </div>
               </div>
-
-              <!-- Tombol Reset -->
               <button onclick="resetBaseline()" style="
-                        background: rgba(255, 68, 102, 0.1);
-                        border: 1px solid rgba(255, 68, 102, 0.3);
-                        color: var(--accent2);
-                        padding: 6px 10px;
-                        border-radius: 6px;
-                        font-family: var(--font-mono);
-                        font-size: 9px;
-                        font-weight: 700;
-                        cursor: pointer;
-                        transition: all 0.2s;
-                        display: flex;
-                        align-items: center;
-                        gap: 4px;
-                      " onmouseover="this.style.background='rgba(255, 68, 102, 0.2)'"
+                background: rgba(255, 68, 102, 0.1); border: 1px solid rgba(255, 68, 102, 0.3);
+                color: var(--accent2); padding: 6px 10px; border-radius: 6px;
+                font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+                cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 4px;
+              " onmouseover="this.style.background='rgba(255, 68, 102, 0.2)'"
                 onmouseout="this.style.background='rgba(255, 68, 102, 0.1)'">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                   <path d="M23 4v6h-6M1 20v-6h6" />
@@ -937,19 +946,16 @@
                 RESET CARDIO <br> BASELINE
               </button>
             </div>
-
             <div style="font-family: var(--font-mono); font-size: 8px; color: var(--text2); margin-top:6px;">
               Status: <span id="baselineStatusText" style="color: var(--warn);">MENGUMPULKAN...</span>
             </div>
           </div>
         </div>
 
-        <!-- HR Chart -->
         <div class="iot-section" id="hrChartSection">
           <div class="iot-header">
             <div class="iot-dot"></div>
             <div class="iot-title">Heart Rate History</div>
-            <!-- Tombol rentang waktu -->
             <div style="display:flex; gap:4px; margin-left:auto;">
               <button onclick="setRange(30)" id="btn30" class="range-btn active-range">30m</button>
               <button onclick="setRange(60)" id="btn60" class="range-btn">1h</button>
@@ -961,7 +967,6 @@
             <canvas id="hrChart"></canvas>
           </div>
         </div>
-
       </div><!-- end right-panel -->
     </div><!-- end main-grid -->
   </div>
@@ -980,29 +985,31 @@
   <script>
     // ── Config ────────────────────────────────────────────────────────
     const LARAVEL_URL = `${window.location.protocol}//${window.location.hostname}:8000`;
-    const EAR_OPEN = 0.44;
-    const EAR_CLOSED = 0.31;
-    const EAR_LEVEL1_MS = 800;   // gejala
-    const EAR_LEVEL2_MS = 1500;  // konfirmasi
-    const EAR_THRESH = 0.36;
-    const MODEL_THRESH = 0.6;
-    const MODEL_STREAK_NEEDED = 3;
+    const MODEL_THRESH = 0.3;
+    const MODEL_STREAK_MS = 900;
+    const DROWSY_HOLD_MS = 800;
+    const HEAD_TURN_SMOOTH_WINDOW = 5
+    const CALIBRATION_FRAMES = 30;
+    const REL_CLOSE_THRESH = 0.8154;
 
-    const HEAD_TURN_MIN = 0.85;
-    const HEAD_TURN_MAX = 1.20;
-    const LOW_EAR_STREAK_NEEDED = 3;
+    const EYE_REGION = [7, 33, 133, 144, 145, 153, 154, 155, 157, 158, 159, 160, 161, 163, 173,
+      246, 249, 263, 362, 373, 374, 380, 381, 382, 384, 385, 386, 387, 388, 390, 398, 466];
+    const MOUTH_REGION = [0, 12, 13, 14, 15, 17, 39, 61, 78, 82, 87, 88, 95, 181, 191,
+      269, 291, 308, 312, 317, 318, 324, 405, 415];
+    const LANDMARK_ORDER = [...EYE_REGION, ...MOUTH_REGION];
 
-    let earValue = 0;
+    const LEFT_EYE_EAR = [362, 385, 387, 263, 373, 380];
+    const RIGHT_EYE_EAR = [33, 160, 158, 133, 153, 144];
+    const NOSE_TIP = 1, LEFT_EYE_OUT = 33, RIGHT_EYE_OUT = 263;
+    const MOUTH_TOP = 13, MOUTH_BOTTOM = 14, MOUTH_LEFT = 78, MOUTH_RIGHT = 308,
+      MOUTH_TOP_OUTER = 12, MOUTH_BOT_OUTER = 15;
+
+    const MAX_WINDOW = 15;
+
     let confidence = 0;
-    let eyeClosedStart = null;
-    let smoothEAR = 0.44;
-    const ALPHA = 0.3;
     let faceDetected = false;
     let isFrontal = true;
     let headTurnRatio = 1;
-    let lowEARStreak = 0;
-    let modelHighStreak = 0;
-    let yawnActive = false;
 
     let lastBeep = 0;
     let frameCount = 0;
@@ -1016,69 +1023,189 @@
     let hrChart = null;
     let currentRange = 30;
 
-    // ── EAR Indices ───────────────────────────────────────────────────
-    const LEFT_EYE = [362, 385, 387, 263, 373, 380];
-    const RIGHT_EYE = [33, 160, 158, 133, 153, 144];
+    let confidenceHighSince = 0, modelDrowsy = false;
+    let drowsyOnUntil = 0;
+    let consecutiveClosedFrames = 0;
+    let lastPerclosW15 = 0;
+
+    let isCalibrating = false;
+    let calibrationStarted = false;
+    let calibrationEars = [];
+    let baselineEAR = 1.0;
+    let calibrationDone = false;
+
+    let calibrationHTRs = [];
+    let baselineHTR = 1.0;
+    const HTR_TOLERANCE = 0.25;
+
+    let headTurnHistory = [];
+
+    const frameBuffer = {
+      ear_avg: [], mar: [], eye_closed_v5: [], mouth_open: [],
+      ear_relative: [], eye_closed_relative: [],
+    };
 
     function dist(a, b) {
       return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
     }
-    function calcEAR(lm, idx) {
-      const A = dist(lm[idx[1]], lm[idx[5]]);
-      const B = dist(lm[idx[2]], lm[idx[4]]);
-      const C = dist(lm[idx[0]], lm[idx[3]]);
-      return C === 0 ? 0 : (A + B) / (2 * C);
+
+    function pushBuffer(k, v) {
+      frameBuffer[k].push(v);
+      if (frameBuffer[k].length > MAX_WINDOW) frameBuffer[k].shift();
     }
 
     function calcHeadTurnRatio(lm) {
-      const nose = lm[1];
-      const leftCheek = lm[234];
-      const rightCheek = lm[454];
-      const distLeft = dist(nose, leftCheek);
-      const distRight = dist(nose, rightCheek);
-      return distRight === 0 ? 1 : distLeft / distRight;
+      const nose = lm[1], lc = lm[234], rc = lm[454];
+      const dl = dist(nose, lc), dr = dist(nose, rc); return dr === 0 ? 1 : dl / dr;
+    }
+
+    function calcEAR6(lm, idx) {
+      const A = dist(lm[idx[1]], lm[idx[5]]), B = dist(lm[idx[2]], lm[idx[4]]), C = dist(lm[idx[0]], lm[idx[3]]);
+      return C === 0 ? 0 : (A + B) / (2 * C);
+    }
+
+    function calcMAR(lm) {
+      const v1 = dist(lm[MOUTH_TOP], lm[MOUTH_BOTTOM]);
+      const v2 = dist(lm[MOUTH_TOP_OUTER], lm[MOUTH_BOT_OUTER]);
+      const h = dist(lm[MOUTH_LEFT], lm[MOUTH_RIGHT]);
+      return h === 0 ? 0 : (v1 + v2) / (2 * h);
+    }
+
+    function normalizeLandmarks(lm) {
+      const nose = lm[NOSE_TIP];
+      const scale = Math.max(dist(lm[LEFT_EYE_OUT], lm[RIGHT_EYE_OUT]), 1e-6);
+      const out = {};
+      for (const i of LANDMARK_ORDER) {
+        out[`lx${i}`] = (lm[i].x - nose.x) / scale;
+        out[`ly${i}`] = (lm[i].y - nose.y) / scale;
+      }
+      return out;
     }
 
     function computeDrowsinessLevel() {
-      const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
-      const earLevel = eyeClosedDuration >= EAR_LEVEL2_MS ? 2
-        : (eyeClosedDuration >= EAR_LEVEL1_MS ? 1 : 0);
-
       const hrLevelValue = hrLow ? 2 : 0;
-      const modelLevel = yawnActive ? 1 : 0;
+      const modelLevel = modelDrowsy ? 2 : (confidence >= 0.4 ? 1 : 0);
 
-      // Level 3: EAR sudah confirm + salah satu sinyal lain aktif
-      if (earLevel === 2 && (modelLevel === 1 || hrLevelValue >= 1)) return 3;
-
-      // Level 2: EAR sendiri sudah confirm, atau dua sinyal lemah gabung
-      if (earLevel === 2) return 2;
-      if (earLevel === 1 && (modelLevel === 1 || hrLevelValue >= 1)) return 2;
-
-      // Level 1: salah satu sinyal gejala aktif sendirian
-      if (earLevel === 1 || modelLevel === 1 || hrLevelValue >= 1) return 1;
-
+      if (modelLevel === 2 && hrLevelValue >= 1) return 3;
+      if (modelLevel === 2) return 2;
+      if (modelLevel === 1 && hrLevelValue >= 1) return 2;
+      if (modelLevel === 1 || hrLevelValue >= 1) return 1;
       return 0;
+    }
+
+    function startCalibration() {
+      calibrationEars = [];
+      calibrationHTRs = [];
+      calibrationStarted = true;
+      isCalibrating = true;
+      document.getElementById('btnStartCalibration').style.display = 'none';
+      document.getElementById('camStatus').querySelector('span').textContent = '🔧 KALIBRASI 0%';
+      document.getElementById('camStatus').className = 'status-card warning';
+    }
+
+    function processFrameForModel(lm, htrSmoothed) {
+      const earL = calcEAR6(lm, LEFT_EYE_EAR), earR = calcEAR6(lm, RIGHT_EYE_EAR);
+      const earAvgRaw = (earL + earR) / 2.0;
+      const mar = calcMAR(lm);
+
+      if (isCalibrating) {
+        calibrationEars.push(earAvgRaw);
+        calibrationHTRs.push(htrSmoothed);
+
+        const progress = Math.min(100, Math.round(calibrationEars.length / CALIBRATION_FRAMES * 100));
+        document.getElementById('camStatus').querySelector('span').textContent = `🔧 KALIBRASI ${progress}%`;
+        document.getElementById('camStatus').className = 'status-card warning';
+
+        if (calibrationEars.length >= CALIBRATION_FRAMES) {
+          baselineEAR = calibrationEars.reduce((a, b) => a + b, 0) / calibrationEars.length;
+          baselineHTR = calibrationHTRs.reduce((a, b) => a + b, 0) / calibrationHTRs.length;
+          isCalibrating = false;
+          calibrationDone = true;
+          document.getElementById('camStatus').querySelector('span').textContent = '● SIAGA';
+          document.getElementById('camStatus').className = 'status-card alert';
+        }
+        return;
+      }
+
+      const earAvg = earAvgRaw;
+      const earRelative = earAvgRaw / baselineEAR;
+      const eyeClosedRelative = earRelative < REL_CLOSE_THRESH ? 1 : 0;
+
+      if (earRelative < REL_CLOSE_THRESH) consecutiveClosedFrames++;
+      else consecutiveClosedFrames = 0;
+
+      const mouthOpen = mar > 0.5 ? 1 : 0;
+
+      pushBuffer('ear_avg', earAvg);
+      pushBuffer('mar', mar);
+      pushBuffer('mouth_open', mouthOpen);
+      pushBuffer('ear_relative', earRelative);
+      pushBuffer('eye_closed_relative', eyeClosedRelative);
+
+      const featureDict = {
+        ...normalizeLandmarks(lm),
+        ear_avg: earAvg,
+        ear_left: earL,
+        ear_right: earR,
+        ear_diff: Math.abs(earL - earR),
+        mar: mar,
+        mouth_open: mouthOpen,
+        ear_relative: earRelative,
+        eye_closed_v3: eyeClosedRelative,
+      };
+
+      for (const w of [5, 10, 15]) {
+        const earRelWindow = frameBuffer.ear_relative.slice(-w);
+        const eyeClosedRelWindow = frameBuffer.eye_closed_relative.slice(-w);
+        const marWindow = frameBuffer.mar.slice(-w);
+        const mouthOpenWindow = frameBuffer.mouth_open.slice(-w);
+
+        const earRelLen = earRelWindow.length;
+        const earRelMean = earRelLen > 0 ? earRelWindow.reduce((a, b) => a + b, 0) / earRelLen : 0;
+        const earRelMin = earRelLen > 0 ? Math.min(...earRelWindow) : 0;
+        const earRelStd = earRelLen > 1 ? (() => {
+          const m = earRelMean;
+          return Math.sqrt(earRelWindow.reduce((a, b) => a + (b - m) ** 2, 0) / (earRelLen - 1));
+        })() : 0;
+
+        const marMean = marWindow.length ? marWindow.reduce((a, b) => a + b, 0) / marWindow.length : 0;
+        const marMax = marWindow.length ? Math.max(...marWindow) : 0;
+        const mouthOpenRate = mouthOpenWindow.length ? mouthOpenWindow.reduce((a, b) => a + b, 0) / mouthOpenWindow.length : 0;
+        const perclos = eyeClosedRelWindow.length ? eyeClosedRelWindow.reduce((a, b) => a + b, 0) / eyeClosedRelWindow.length : 0;
+
+        featureDict[`ear_rel_mean_w${w}`] = earRelMean;
+        featureDict[`ear_rel_min_w${w}`] = earRelMin;
+        featureDict[`ear_rel_std_w${w}`] = earRelStd;
+        featureDict[`mar_mean_w${w}`] = marMean;
+        featureDict[`mar_max_w${w}`] = marMax;
+        featureDict[`mouth_open_rate_w${w}`] = mouthOpenRate;
+        featureDict[`perclos_w${w}`] = perclos;
+        if (w === 15) lastPerclosW15 = perclos;
+      }
+
+      if (frameCount % 5 === 0 && calibrationDone) {
+        predictLocal(featureDict);
+      }
     }
 
     // ── MediaPipe ────────────────────────────────────────────────────
     const faceMesh = new FaceMesh({
       locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
     });
+
     faceMesh.setOptions({
       maxNumFaces: 1,
       refineLandmarks: false,
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5,
     });
+
     faceMesh.onResults(async (results) => {
       if (!cameraActive) return;
-
       frameCount++;
 
       if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
         faceDetected = false;
-        eyeClosedStart = null;
-        lowEARStreak = 0;
         document.getElementById('noFace').style.display = 'block';
         updateUI();
         return;
@@ -1086,38 +1213,28 @@
 
       faceDetected = true;
       document.getElementById('noFace').style.display = 'none';
-
       const lm = results.multiFaceLandmarks[0];
 
+      if (!calibrationStarted) { updateUI(); return; }
+
       headTurnRatio = calcHeadTurnRatio(lm);
-      isFrontal = headTurnRatio >= HEAD_TURN_MIN && headTurnRatio <= HEAD_TURN_MAX;
+      headTurnHistory.push(headTurnRatio);
+      if (headTurnHistory.length > HEAD_TURN_SMOOTH_WINDOW) headTurnHistory.shift();
+      const headTurnRatioSmoothed = headTurnHistory.reduce((a, b) => a + b, 0) / headTurnHistory.length;
 
-      const leftEAR = calcEAR(lm, LEFT_EYE);
-      const rightEAR = calcEAR(lm, RIGHT_EYE);
-      const rawEAR = Math.max(leftEAR, rightEAR);
-
-      smoothEAR = ALPHA * rawEAR + (1 - ALPHA) * smoothEAR;
-      earValue = smoothEAR;
-
-      if (earValue < EAR_THRESH && isFrontal) {
-        lowEARStreak++;
-        if (lowEARStreak >= LOW_EAR_STREAK_NEEDED && eyeClosedStart === null) {
-          eyeClosedStart = Date.now();
-        }
-      } else if (!isFrontal) {
-        // kepala menoleh → jeda, jangan reset total
+      if (isCalibrating) {
+        isFrontal = true;
       } else {
-        lowEARStreak = 0;
-        eyeClosedStart = null;
+        isFrontal = Math.abs(headTurnRatioSmoothed - baselineHTR) <= HTR_TOLERANCE;
       }
 
-      if (frameCount % 10 === 0 && isFrontal) {
-        const flat = [];
-        for (let i = 0; i < 468; i++) {
-          flat.push(lm[i].x);
-          flat.push(lm[i].y);
-        }
-        predictLocal(flat);
+      processFrameForModel(lm, headTurnRatioSmoothed);
+
+      if (!isFrontal) {
+        modelDrowsy = false;
+        confidence = 0;
+        confidenceHighSince = 0;
+        drowsyOnUntil = 0;
       }
 
       updateUI();
@@ -1373,22 +1490,20 @@
     }
 
     function resetDrowsinessState() {
-      earValue = 0;
       confidence = 0;
-      eyeClosedStart = null;
-      lowEARStreak = 0;
-      modelHighStreak = 0;
-      yawnActive = false;
-      smoothEAR = 0.44; // balik ke nilai awal yang wajar, biar smoothing tidak "ingat" nilai lama
+      confidenceHighSince = 0;
+      modelDrowsy = false;
+      drowsyOnUntil = 0;
+      consecutiveClosedFrames = 0;
     }
 
     // ── Update UI ─────────────────────────────────────────────────────
     function updateUI() {
       if (!cameraActive) return;
 
+      if (isCalibrating) return;
+
       const level = computeDrowsinessLevel();
-      const eyeClosedDuration = eyeClosedStart ? Date.now() - eyeClosedStart : 0;
-      const eyeDrowsy = eyeClosedDuration >= EAR_LEVEL2_MS; // dipakai untuk styling EAR card
 
       let status, statusClass;
       if (!faceDetected) {
@@ -1410,23 +1525,25 @@
       const now = Date.now();
       if (level >= 2 && now - lastBeep > 1000) { playBeep(); lastBeep = now; }
 
-      const earPct = Math.max(0, Math.min(100,
-        (earValue - EAR_CLOSED) / (EAR_OPEN - EAR_CLOSED) * 100
-      ));
-      document.getElementById('earVal').textContent = earValue.toFixed(3);
-      document.getElementById('earVal').className = 'metric-value' + (eyeDrowsy ? ' danger' : ' good');
-      document.getElementById('earCard').classList.toggle('warn-active', eyeDrowsy);
+      const lastEar = frameBuffer.ear_avg.at(-1) ?? 0;
+      document.getElementById('earVal').textContent = frameBuffer.ear_avg.length ? lastEar.toFixed(3) : '—';
+      document.getElementById('earVal').className = 'metric-value' + (modelDrowsy ? ' danger' : ' good');
+      document.getElementById('earCard').classList.toggle('warn-active', modelDrowsy);
 
       // ★ Cek null karena confidence section di-comment di HTML
       const earBarEl = document.getElementById('earBar');
       const earPctEl = document.getElementById('earPct');
-      if (earBarEl) { earBarEl.style.width = earPct + '%'; earBarEl.className = 'ear-bar-fill' + (earValue < EAR_THRESH ? ' low' : ''); }
-      if (earPctEl) earPctEl.textContent = earPct.toFixed(0) + '%';
+      if (earBarEl) {
+        const earPct = Math.max(0, Math.min(100, (lastEar - 0.15) / (0.45 - 0.15) * 100));
+        earBarEl.style.width = earPct + '%';
+        earBarEl.className = 'ear-bar-fill' + (modelDrowsy ? ' low' : '');
+        if (earPctEl) earPctEl.textContent = earPct.toFixed(0) + '%';
+      }
 
       const confPct = (confidence * 100).toFixed(1);
       document.getElementById('modelVal').textContent = confPct + '%';
-      document.getElementById('modelVal').className = 'metric-value' + (yawnActive ? ' danger' : '');
-      document.getElementById('modelCard').classList.toggle('warn-active', yawnActive);
+      document.getElementById('modelVal').className = 'metric-value' + (modelDrowsy ? ' danger' : '');
+      document.getElementById('modelCard').classList.toggle('warn-active', modelDrowsy);
 
       // ★ Cek null karena confidence bars di-comment di HTML
       const confBarEl = document.getElementById('confBar');
@@ -1434,6 +1551,20 @@
       if (confBarEl) confBarEl.style.width = confPct + '%';
       if (confBarEl) confBarEl.className = 'bar-fill' + (confidence >= MODEL_THRESH ? ' high' : confidence >= 0.4 ? ' medium' : '');
       if (confPctEl) { confPctEl.textContent = confPct + '%'; confPctEl.style.color = modelDrowsy ? 'var(--accent2)' : 'var(--accent)'; }
+
+      // PERCLOS gauge
+      const perclosPctVal = (lastPerclosW15 * 100).toFixed(0);
+      document.getElementById('perclosPct').textContent = perclosPctVal + '%';
+      document.getElementById('perclosBar').style.width = perclosPctVal + '%';
+
+      // Closure timer (informatif, tidak mempengaruhi alert)
+      const timerEl = document.getElementById('closureTimer');
+      if (consecutiveClosedFrames > 0 && !modelDrowsy) {
+        const approxSeconds = (consecutiveClosedFrames / 15).toFixed(1);
+        timerEl.textContent = `⏱ mata tertutup ~${approxSeconds}s — menganalisis pola...`;
+      } else {
+        timerEl.textContent = '';
+      }
     }
 
     // ── Beep ──────────────────────────────────────────────────────────
@@ -1452,31 +1583,36 @@
 
     // ── Load AI ───────────────────────────────────────────────────────
     async function loadAI() {
-      model = await tflite.loadTFLiteModel('/model/drowsiness_model_v2.tflite');
-      scaler = await fetch('/model/scaler_v2.json').then(r => r.json());
-      console.log('AI loaded');
+      model = await tflite.loadTFLiteModel('/model/7smlp_reflandmarkoff.tflite');
+      scaler = await fetch('/model/7scaler_reflandmarkoff.json').then(r => r.json());
+      console.log('MLP Model Loaded');
     }
 
-    function normalize(data) {
-      return data.map((v, i) => (v * scaler.scale[i]) + scaler.min[i]);
+    function buildScaledVector(featureDict) {
+      const raw = scaler.feature_columns.map(col => featureDict[col] ?? 0);
+      return raw.map((v, i) => v * scaler.scale[i] + scaler.min[i]);
     }
 
-    async function predictLocal(flat) {
+    async function predictLocal(featureDict) {
       if (isPredicting) return;
       isPredicting = true;
       try {
-        const normalized = normalize(flat);
-        const input = tf.tensor([normalized], [1, 936]);
+        const scaledVec = buildScaledVector(featureDict);
+        const input = tf.tensor([scaledVec], [1, scaledVec.length]);
         const output = model.predict(input);
         confidence = output.dataSync()[0];
-        input.dispose(); output.dispose();
+        input.dispose();
+        output.dispose();
 
         if (confidence >= MODEL_THRESH) {
-          modelHighStreak++;
-          yawnActive = modelHighStreak >= MODEL_STREAK_NEEDED;
+          if (confidenceHighSince === 0) confidenceHighSince = Date.now();
+          if (Date.now() - confidenceHighSince >= MODEL_STREAK_MS) {
+            modelDrowsy = true;
+            drowsyOnUntil = Date.now() + DROWSY_HOLD_MS;
+          }
         } else {
-          modelHighStreak = 0;
-          yawnActive = false;
+          confidenceHighSince = 0;
+          modelDrowsy = Date.now() < drowsyOnUntil;
         }
       } catch (e) {
         console.error('PREDICT ERROR:', e);
@@ -1496,6 +1632,8 @@
 
         // Kamera langsung aktif, tidak menunggu HR
         await activateCamera();
+
+        document.getElementById('btnStartCalibration').style.display = 'block';
 
         document.getElementById('loadingScreen').classList.add('hidden');
       } catch (e) {
