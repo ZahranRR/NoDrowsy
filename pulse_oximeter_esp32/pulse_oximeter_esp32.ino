@@ -146,7 +146,6 @@ int SPO2 = 0;
 int SPO2f = 0;
 bool filter_for_graph = false;
 bool draw_Red = false;
-uint8_t sleep_counter = 0;
 long lastBeat = 0;
 long displaytime = 0;
 unsigned long lastMqttRetry = 0;
@@ -154,10 +153,11 @@ const int MQTT_RETRY_INTERVAL = 5000;
 
 unsigned long fingerDetectedAt = 0;          // kapan jari pertama terdeteksi
 bool wasFingerDetected = false;              // status jari di loop sebelumnya
-const unsigned long WARMUP_DURATION = 5000;  // 5 detik warm-up (bisa 3000-5000)
+const unsigned long WARMUP_DURATION = 10000;  // 10 detik warm-up
 
 unsigned long lastFingerSeenAt = 0;                   // kapan terakhir kali jari terdeteksi valid
-const unsigned long NO_FINGER_SLEEP_TIMEOUT = 25000;  // 25 detik tanpa jari → sleep
+const unsigned long NO_FINGER_SLEEP_TIMEOUT = 60000;  // 1 mnt tanpa jari → sleep
+const unsigned long SLEEP_WARNING_LEAD_MS = 15000;    // tampilkan "Sleeping in Xs" 15 detik terakhir sebelum sleep
 bool sleepTimerStarted = false;                       // supaya timer mulai dari boot juga
 
 bool mqttConnected = false;
@@ -190,7 +190,7 @@ void go_sleep() {
 }
 
 // ─── Draw OLED ───────────────────────────────────────────────────
-void draw_oled(int msg) {
+void draw_oled(int msg, int countdownSec = 0) {
   oled.clearDisplay();
 
   switch (msg) {
@@ -249,7 +249,7 @@ void draw_oled(int msg) {
       oled.setTextColor(SH110X_WHITE);
       oled.setCursor(20, 24);
       oled.print(F("Sleeping in "));
-      oled.print((char)('0' + (10 - sleep_counter / 10)));
+      oled.print(countdownSec);
       oled.print('s');
       break;
 
@@ -341,10 +341,9 @@ void connectMQTT() {
     Serial.println("connected!");
     mqttConnected = true;
 
-    fingerDetectedAt = millis();  // Reset warmup timer
-    wasFingerDetected = true;     // Anggap jari masih terdeteksi
-    lastFingerSeenAt = millis();  // Reset timeout
-    sleep_counter = 0;            // Reset sleep counter
+    // fingerDetectedAt = millis();  // Reset warmup timer
+    // wasFingerDetected = true;     // Anggap jari masih terdeteksi
+    // lastFingerSeenAt = millis();  // Reset timeout
 
     // Tampilkan MQTT connected di OLED sebentar
     oled.clearDisplay();
@@ -480,27 +479,39 @@ void loop() {
 
   // ── Jari tidak diletakkan ──────────────────────────────────────
   if (irValue < 10000 || redValue < 5000) {
-    draw_oled(sleep_counter <= 50 ? 1 : 4);
+    unsigned long elapsed = now - lastFingerSeenAt;
+    unsigned long remainingMs = (elapsed >= NO_FINGER_SLEEP_TIMEOUT) ? 0 : (NO_FINGER_SLEEP_TIMEOUT - elapsed);
+    int remainingSec = (remainingMs + 999) / 1000;  // pembulatan ke atas, biar ga sempat kelip "0s" duluan
+
+    if (remainingMs <= SLEEP_WARNING_LEAD_MS) {
+      draw_oled(4, remainingSec);
+    } else {
+      draw_oled(1);
+    }
     delay(200);
-    ++sleep_counter;
     wasFingerDetected = false;
 
-    if (now - lastFingerSeenAt >= NO_FINGER_SLEEP_TIMEOUT) {
-      Serial.println(F("25 detik tanpa jari, masuk sleep..."));
+    if (elapsed >= NO_FINGER_SLEEP_TIMEOUT) {
+      Serial.println(F("60 detik tanpa jari, masuk sleep..."));
       go_sleep();
-      sleep_counter = 0;
     }
     return;
   }
 
   // ── Jari terdeteksi ───────────────────────────────────────────
-  sleep_counter = 0;
   lastFingerSeenAt = now;
 
   if (!wasFingerDetected) {
     fingerDetectedAt = now;
     wasFingerDetected = true;
+    lastBeat = now;
     Serial.println(F("Jari terdeteksi, mulai warm-up..."));
+
+    for (int i = 0; i < BPM_SAMPLES; i++) bpmBuffer[i] = 0;
+    bpmIdx = 0;
+    beatAvg = 0;
+    SPO2 = 0;
+    SPO2f = 0;
   }
 
   int16_t IR_signal, Red_signal;

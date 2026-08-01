@@ -861,14 +861,6 @@
         </div>
 
         <div class="confidence-section">
-          <div class="conf-header">
-            <span class="conf-label">Drowsiness Confidence</span>
-            <span class="conf-value" id="confPct">0%</span>
-          </div>
-          <div class="bar-track">
-            <div class="bar-fill" id="confBar"></div>
-          </div>
-
           <div class="conf-header" style="margin-top:10px">
             <span class="conf-label">Eye Openness</span>
             <span class="conf-value" id="earPct" style="color:var(--accent)">0%</span>
@@ -956,12 +948,6 @@
           <div class="iot-header">
             <div class="iot-dot"></div>
             <div class="iot-title">Heart Rate History</div>
-            <div style="display:flex; gap:4px; margin-left:auto;">
-              <button onclick="setRange(30)" id="btn30" class="range-btn active-range">30m</button>
-              <button onclick="setRange(60)" id="btn60" class="range-btn">1h</button>
-              <button onclick="setRange(180)" id="btn180" class="range-btn">3h</button>
-              <button onclick="setRange(360)" id="btn360" class="range-btn">6h</button>
-            </div>
           </div>
           <div style="position:relative; height:160px;">
             <canvas id="hrChart"></canvas>
@@ -1094,6 +1080,7 @@
     }
 
     function startCalibration() {
+      fetch(`${LARAVEL_URL}/api/baseline/reset`, { method: 'POST' })
       calibrationEars = [];
       calibrationHTRs = [];
       calibrationStarted = true;
@@ -1339,12 +1326,14 @@
                 borderColor: ctx => {
                   const p0 = ctx.p0?.raw;
                   const p1 = ctx.p1?.raw;
+                  if (p0?.hrLow || p1?.hrLow) return '#ffaa00';
                   if (p0?.cam || p1?.cam) return '#00ff88';
                   return '#4488ff';
                 },
                 backgroundColor: ctx => {
                   const p0 = ctx.p0?.raw;
                   const p1 = ctx.p1?.raw;
+                  if (p0?.hrLow || p1?.hrLow) return 'rgba(255, 170, 0, 0.12)';
                   if (p0?.cam || p1?.cam) return 'rgba(0, 255, 136, 0.08)';
                   return 'rgba(68, 136, 255, 0.08)';
                 },
@@ -1425,24 +1414,12 @@
       } catch (e) { }
     }
 
-    function setRange(minutes) {
-      currentRange = minutes;
-
-      // Update tombol aktif
-      ['30', '60', '180', '360'].forEach(m => {
-        const btn = document.getElementById(`btn${m}`);
-        if (btn) btn.className = 'range-btn' + (parseInt(m) === minutes ? ' active-range' : '');
-      });
-
-      loadChartData(minutes);
-    }
-
     function addLivePoint(hr, baseline) {
       if (!hrChart) return;
       const now = Date.now();
 
       // Tambah titik HR terbaru
-      hrChart.data.datasets[0].data.push({ x: now, y: hr, cam: cameraActive });
+      hrChart.data.datasets[0].data.push({ x: now, y: hr, cam: cameraActive, hrLow: hrLow });
 
       // Update ujung kanan garis baseline
       const baselineData = hrChart.data.datasets[1].data;
@@ -1523,7 +1500,11 @@
       document.getElementById('alertOverlay').classList.toggle('active', level >= 2);
 
       const now = Date.now();
-      if (level >= 2 && now - lastBeep > 1000) { playBeep(); lastBeep = now; }
+      const beepInterval = level === 3 ? 400 : 1000; // jika stts level 3 lebih sering bunyi
+      if (level >= 2 && now - lastBeep > beepInterval) {
+        playBeep(level === 3);
+        lastBeep = now;
+      }
 
       const lastEar = frameBuffer.ear_avg.at(-1) ?? 0;
       document.getElementById('earVal').textContent = frameBuffer.ear_avg.length ? lastEar.toFixed(3) : '—';
@@ -1545,13 +1526,6 @@
       document.getElementById('modelVal').className = 'metric-value' + (modelDrowsy ? ' danger' : '');
       document.getElementById('modelCard').classList.toggle('warn-active', modelDrowsy);
 
-      // ★ Cek null karena confidence bars di-comment di HTML
-      const confBarEl = document.getElementById('confBar');
-      const confPctEl = document.getElementById('confPct');
-      if (confBarEl) confBarEl.style.width = confPct + '%';
-      if (confBarEl) confBarEl.className = 'bar-fill' + (confidence >= MODEL_THRESH ? ' high' : confidence >= 0.4 ? ' medium' : '');
-      if (confPctEl) { confPctEl.textContent = confPct + '%'; confPctEl.style.color = modelDrowsy ? 'var(--accent2)' : 'var(--accent)'; }
-
       // PERCLOS gauge
       const perclosPctVal = (lastPerclosW15 * 100).toFixed(0);
       document.getElementById('perclosPct').textContent = perclosPctVal + '%';
@@ -1568,16 +1542,30 @@
     }
 
     // ── Beep ──────────────────────────────────────────────────────────
-    function playBeep() {
+    function playBeep(urgent = false) {
       try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.frequency.value = 880; osc.type = 'sine';
-        gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.4);
+        if (!urgent) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.value = 880; osc.type = 'sine';
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.4);
+          return;
+        }
+        // MICROSLEEP ALERT
+        for (let i = 0; i < 3; i++) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.value = 1200; osc.type = 'square';
+          const start = ctx.currentTime + i * 0.18;
+          gain.gain.setValueAtTime(0.5, start);
+          gain.gain.exponentialRampToValueAtTime(0.001, start + 0.15);
+          osc.start(start); osc.stop(start + 0.15);
+        }
       } catch (e) { }
     }
 

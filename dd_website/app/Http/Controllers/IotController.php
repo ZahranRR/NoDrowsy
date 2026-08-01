@@ -109,7 +109,7 @@ class IotController extends Controller
                 }
                 Cache::put('hr_drop_confirm', $dropConfirmCount, 30);
 
-                if ($dropConfirmCount >= 3) {
+                if ($dropConfirmCount >= 4) {
                     Cache::put('hr_drop_latched', true, 3600); // kunci, tidak akan direset otomatis
                 }
             }
