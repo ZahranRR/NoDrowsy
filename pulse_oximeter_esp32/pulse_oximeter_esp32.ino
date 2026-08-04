@@ -26,13 +26,14 @@
 #include <pgmspace.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 
 // ─── WiFi & MQTT Config ───────────────────────────────────────────
 // const char* WIFI_SSID     = "watermelons";
 // const char* WIFI_PASSWORD = "watermelons";
-char MQTT_SERVER[40] = "192.168.18.11";  // IP laptop
-const int MQTT_PORT = 1883;
+char MQTT_SERVER[60] = "a469dd8f6d484da1a35f07a7b9e4f4ff.s1.eu.hivemq.cloud";  // IP hivemq
+const int MQTT_PORT = 8883;
 const char* MQTT_TOPIC = "oximeter/data";
 const char* MQTT_CLIENT = "ESP32-Oximeter";
 
@@ -49,7 +50,7 @@ MAX30102 sensor;
 Pulse pulseIR;
 Pulse pulseRed;
 MAFilter bpm;
-WiFiClient wifiClient;
+WiFiClientSecure wifiClient;
 PubSubClient mqtt(wifiClient);
 
 // ─── BPM Smoothing ───────────────────────────────────────────────
@@ -337,7 +338,7 @@ void connectMQTT() {
 
   Serial.print("Connecting MQTT...");
 
-  if (mqtt.connect(MQTT_CLIENT)) {
+  if (mqtt.connect(MQTT_CLIENT, "alanganteng", "alanganteng123")) {
     Serial.println("connected!");
     mqttConnected = true;
 
@@ -379,13 +380,13 @@ void setup() {
   draw_Red = prefs.getBool("drawRed", false);
 
   String savedMqtt = prefs.getString("mqtt_ip", MQTT_SERVER);
-  savedMqtt.toCharArray(MQTT_SERVER, 40);
+  savedMqtt.toCharArray(MQTT_SERVER, 60);
 
   // ── WiFiManager ──────────────────────────────────────────────
   WiFiManager wifiManager;
 
   // Custom parameter untuk MQTT Server
-  WiFiManagerParameter mqttParam("mqtt", "MQTT Server IP", MQTT_SERVER, 40);
+  WiFiManagerParameter mqttParam("mqtt", "MQTT Server IP", MQTT_SERVER, 60);
   wifiManager.addParameter(&mqttParam);
 
   wifiManager.setConfigPortalTimeout(180);
@@ -401,7 +402,7 @@ void setup() {
     Serial.println("WiFi connected! IP: " + WiFi.localIP().toString());
 
     // Simpan MQTT server dari input portal
-    strncpy(MQTT_SERVER, mqttParam.getValue(), 40);
+    strncpy(MQTT_SERVER, mqttParam.getValue(), 60);
     Serial.println("MQTT Server: " + String(MQTT_SERVER));
 
     // Simpan ke flash supaya persist setelah restart
@@ -411,6 +412,7 @@ void setup() {
   }
 
   // Setup MQTT
+  wifiClient.setInsecure();
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
   connectMQTT();
 
