@@ -9,8 +9,14 @@ use PhpMqtt\Client\ConnectionSettings;
 $app = require_once __DIR__ . '/bootstrap/app.php';
 $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-$client = new MqttClient('127.0.0.1', 1883, 'laravel-subscriber');
-$client->connect(new ConnectionSettings(), true);
+$client = new MqttClient('a469dd8f6d484da1a35f07a7b9e4f4ff.s1.eu.hivemq.cloud', 8883, 'laravel-subscriber');
+
+$connectionSettings = (new ConnectionSettings())
+    ->setUsername('alanganteng')
+    ->setPassword('alanganteng123')
+    ->setUseTls(true);
+
+$client->connect($connectionSettings, true);
 
 echo "MQTT subscriber running...\n";
 

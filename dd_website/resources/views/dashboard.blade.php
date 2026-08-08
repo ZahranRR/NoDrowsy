@@ -970,7 +970,7 @@
 
   <script>
     // ── Config ────────────────────────────────────────────────────────
-    const LARAVEL_URL = `${window.location.protocol}//${window.location.hostname}:8000`;
+    const LARAVEL_URL = '';
     const MODEL_THRESH = 0.3;
     const MODEL_STREAK_MS = 900;
     const DROWSY_HOLD_MS = 800;
