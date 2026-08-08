@@ -1070,12 +1070,11 @@
 
     function computeDrowsinessLevel() {
       const hrLevelValue = hrLow ? 2 : 0;
-      const modelLevel = modelDrowsy ? 2 : (confidence >= 0.4 ? 1 : 0);
+      const modelLevel = modelDrowsy ? 2 : 0;
 
       if (modelLevel === 2 && hrLevelValue >= 1) return 3;
       if (modelLevel === 2) return 2;
-      if (modelLevel === 1 && hrLevelValue >= 1) return 2;
-      if (modelLevel === 1 || hrLevelValue >= 1) return 1;
+      if (hrLevelValue >= 1) return 1;
       return 0;
     }
 
